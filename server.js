@@ -23,12 +23,16 @@ app.use(express.json({ limit: '50mb' }));
 
 const PORT = process.env.PORT || 3100;
 
-app.get('/', (_, res) => res.json({
-  service: 'iZCloud',
-  status: 'ok',
-  health: '/api/health',
-  repo: 'https://github.com/machado3-lang/izcloud-conection',
-}));
+app.get('/', (_, res) => {
+  const index = path.join(__dirname, 'public', 'index.html');
+  if (fs.existsSync(index)) return res.sendFile(index);
+  res.json({
+    service: 'iZCloud',
+    status: 'ok',
+    health: '/api/health',
+    repo: 'https://github.com/machado3-lang/izcloud-conection',
+  });
+});
 
 app.get('/api/health', (_, res) => res.json({ status: 'ok', service: 'iZCloud', multiTenant: true }));
 
@@ -151,6 +155,9 @@ app.post('/api/afd/import', async (req, res) => {
     res.json({ total: linhas.length, arquivo });
   } catch (e) { res.status(502).json({ error: e.message }); }
 });
+
+// Arquivos estaticos da UI web (public/). Rotas /api/* acima tem precedencia.
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Poller silencioso multi-tenant (so roda se houver banco core)
 try { iniciarPoller(getCorePool, getTenantPool); } catch {}

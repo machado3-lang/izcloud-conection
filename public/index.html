@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>iZCloud — Nuvem própria para REPs 1510/671</title>
+<style>
+  :root {
+    --bg: #0f172a; --panel: #1e293b; --panel2: #273449; --line: #334155;
+    --txt: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8; --accent2: #22c55e;
+    --danger: #ef4444; --warn: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg); color: var(--txt); font-size: 14px; line-height: 1.45;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 18px; background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  header .brand { font-weight: 700; font-size: 16px; letter-spacing: .3px; }
+  header .brand small { color: var(--muted); font-weight: 400; margin-left: 8px; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 18px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tabs button {
+    background: var(--panel); color: var(--muted); border: 1px solid var(--line);
+    padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 13px;
+  }
+  .tabs button.active { background: var(--accent); color: #05263a; border-color: var(--accent); font-weight: 600; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px; margin-bottom: 16px;
+  }
+  .card h3 { margin: 0 0 12px; font-size: 14px; color: var(--accent); }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 4px; }
+  input, select, textarea {
+    width: 100%; padding: 9px 10px; background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 7px; color: var(--txt); font-size: 13px;
+  }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 160px; }
+  button.primary {
+    background: var(--accent); color: #05263a; border: none; padding: 10px 16px;
+    border-radius: 8px; cursor: pointer; font-weight: 600; margin-top: 12px;
+  }
+  button.ghost {
+    background: transparent; color: var(--muted); border: 1px solid var(--line);
+    padding: 9px 14px; border-radius: 8px; cursor: pointer;
+  }
+  button.danger { background: var(--danger); color: #fff; border: none; padding: 8px 12px; border-radius: 7px; cursor: pointer; }
+  .msg { padding: 9px 11px; border-radius: 7px; margin: 10px 0; font-size: 13px; white-space: pre-wrap; }
+  .msg.ok { background: rgba(34,197,94,.12); color: #bbf7d0; border: 1px solid #166534; }
+  .msg.err { background: rgba(239,68,68,.12); color: #fecaca; border: 1px solid #7f1d1d; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .pill.c { background: rgba(56,189,248,.15); color: var(--accent); }
+  .pill.g { background: rgba(34,197,94,.15); color: var(--accent2); }
+  .pill.am { background: rgba(245,158,11,.15); color: var(--warn); }
+  .muted { color: var(--muted); }
+  .hidden { display: none !important; }
+  #login { max-width: 360px; margin: 8vh auto 0; }
+  .kv { font-size: 12px; color: var(--muted); }
+  .kv b { color: var(--txt); font-weight: 600; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header id="topbar" class="hidden">
+  <div class="brand">☁ iZCloud <small>nuvem própria · REPs 1510/671</small></div>
+  <div>
+    <span class="muted" id="who" style="margin-right:12px;"></span>
+    <button class="ghost" id="logout">Sair</button>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- LOGIN -->
+  <div id="login" class="card">
+    <h3>Entrar</h3>
+    <label>Login (cliente)</label>
+    <input id="l_login" placeholder="empresa1" autocomplete="username" />
+    <label>Senha</label>
+    <input id="l_senha" type="password" placeholder="••••••" autocomplete="current-password" />
+    <button class="primary" id="l_btn">Entrar</button>
+    <div id="l_msg"></div>
+  </div>
+
+  <!-- APP -->
+  <div id="app" class="hidden">
+    <div class="tabs">
+      <button data-tab="reps" class="active">REPs</button>
+      <button data-tab="pessoas">Pessoas</button>
+      <button data-tab="afd">AFD</button>
+    </div>
+
+    <!-- REPS -->
+    <section data-pane="reps">
+      <div class="card">
+        <h3>1. Sondar REP (auto-detecta 1510/671)</h3>
+        <div class="row">
+          <div><label>IP do REP</label><input id="p_ip" placeholder="192.168.100.132" /></div>
+          <div><label>Porta</label><input id="p_porta" value="443" /></div>
+          <div><label>Usuário</label><input id="p_user" value="admin" /></div>
+          <div><label>Senha</label><input id="p_pass" type="password" value="admin" /></div>
+        </div>
+        <button class="primary" id="p_probe">Sondar</button>
+        <div id="p_probe_out"></div>
+      </div>
+
+      <div class="card" id="p_cadastro" style="display:none;">
+        <h3>2. Cadastrar REP na nuvem</h3>
+        <div class="row">
+          <div><label>id_Equipamento</label><input id="c_id" type="number" /></div>
+          <div><label>Nome</label><input id="c_nome" /></div>
+          <div><label>IpAddress</label><input id="c_ip" /></div>
+          <div><label>Porta</label><input id="c_porta" /></div>
+        </div>
+        <div class="row">
+          <div><label>Passcode (senha de comunicação)</label><input id="c_pass" type="password" /></div>
+          <div><label>REPType (portaria)</label>
+            <select id="c_tipo"><option value="1510">1510</option><option value="671">671</option></select>
+          </div>
+        </div>
+        <button class="primary" id="c_save">Cadastrar</button>
+        <div id="c_msg"></div>
+      </div>
+
+      <div class="card">
+        <h3>REPs cadastrados</h3>
+        <button class="ghost" id="r_refresh">Atualizar</button>
+        <div id="r_list" style="margin-top:10px;"></div>
+      </div>
+    </section>
+
+    <!-- PESSOAS -->
+    <section data-pane="pessoas" class="hidden">
+      <div class="card">
+        <h3>Enviar pessoa para a memória do REP</h3>
+        <div class="row">
+          <div><label>REP (IP)</label><input id="u_ip" placeholder="192.168.100.132" /></div>
+          <div><label>Porta</label><input id="u_porta" value="443" /></div>
+          <div><label>Usuário REP</label><input id="u_user" value="admin" /></div>
+          <div><label>Senha REP</label><input id="u_pass" type="password" value="admin" /></div>
+        </div>
+        <div class="row">
+          <div><label>Portaria do REP</label>
+            <select id="u_port"><option value="1510">1510 (PIS)</option><option value="671">671 (CPF)</option></select>
+          </div>
+          <div><label id="u_doclabel">PIS</label><input id="u_doc" placeholder="12345678901" /></div>
+          <div><label>Nome</label><input id="u_nome" placeholder="João Silva" /></div>
+          <div><label>Matrícula</label><input id="u_matr" placeholder="1" /></div>
+        </div>
+        <div class="row">
+          <div><label>Senha de acesso (REP)</label><input id="u_senha" value="1234" /></div>
+          <div><label>Código</label><input id="u_codigo" placeholder="1" /></div>
+        </div>
+        <button class="primary" id="u_send">Enviar pessoa</button>
+        <div id="u_msg"></div>
+      </div>
+    </section>
+
+    <!-- AFD -->
+    <section data-pane="afd" class="hidden">
+      <div class="card">
+        <h3>Sincronizar AFD (nuvem ← REP)</h3>
+        <div class="row">
+          <div><label>REP (IP)</label><input id="a_ip" placeholder="192.168.100.132" /></div>
+          <div><label>Porta</label><input id="a_porta" value="443" /></div>
+          <div><label>Usuário REP</label><input id="a_user" value="admin" /></div>
+          <div><label>Senha REP</label><input id="a_pass" type="password" value="admin" /></div>
+        </div>
+        <div class="row">
+          <div><label>id_Equipamento</label><input id="a_eqp" type="number" placeholder="1" /></div>
+          <div><label>Modo</label>
+            <select id="a_mode"><option value="1510">1510</option><option value="671">671</option></select>
+          </div>
+        </div>
+        <button class="primary" id="a_sync">Sincronizar agora</button>
+        <div id="a_msg"></div>
+      </div>
+
+      <div class="card">
+        <h3>Exportar AFD por período (download)</h3>
+        <div class="row">
+          <div><label>id_Equipamento</label><input id="e_eqp" type="number" placeholder="1" /></div>
+          <div><label>Data início</label><input id="e_ini" type="date" /></div>
+          <div><label>Data fim</label><input id="e_fim" type="date" /></div>
+          <div><label>Serial (opcional)</label><input id="e_serial" placeholder="00014003750029470" /></div>
+        </div>
+        <button class="primary" id="e_exp">Exportar</button>
+        <div id="e_msg"></div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const API = '';
+let TOKEN = localStorage.getItem('iz_token') || '';
+let SCHEMA = localStorage.getItem('iz_schema') || '';
+
+function authHeaders(extra = {}) {
+  return { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + TOKEN, ...extra };
+}
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, {
+    ...opts,
+    headers: authHeaders(opts.headers || {}),
+  });
+  let data = null;
+  const ct = res.headers.get('content-type') || '';
+  if (ct.includes('application/json')) data = await res.json();
+  if (!res.ok) {
+    const msg = (data && (data.error || data.detalhe)) || ('HTTP ' + res.status);
+    throw new Error(msg);
+  }
+  return data;
+}
+function show(el, ok, text) {
+  el.className = 'msg ' + (ok ? 'ok' : 'err');
+  el.textContent = text;
+}
+function setMsg(el, ok, text) { el.innerHTML = ''; show(el, ok, text); }
+
+// ---------- auth state ----------
+function applyAuth() {
+  const logged = !!TOKEN;
+  $('topbar').classList.toggle('hidden', !logged);
+  $('login').classList.toggle('hidden', logged);
+  $('app').classList.toggle('hidden', !logged);
+  if (logged) {
+    $('who').textContent = SCHEMA || '';
+    loadReps();
+  }
+}
+function logout() {
+  TOKEN = ''; SCHEMA = '';
+  localStorage.removeItem('iz_token'); localStorage.removeItem('iz_schema');
+  applyAuth();
+}
+
+$('logout').onclick = logout;
+$('l_btn').onclick = async () => {
+  try {
+    const r = await fetch(API + '/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login: $('l_login').value, senha: $('l_senha').value }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+    TOKEN = data.token; SCHEMA = data.schema;
+    localStorage.setItem('iz_token', TOKEN);
+    localStorage.setItem('iz_schema', SCHEMA);
+    setMsg($('l_msg'), true, 'Login OK · schema ' + data.schema);
+    applyAuth();
+  } catch (e) { setMsg($('l_msg'), false, e.message); }
+};
+
+// ---------- tabs ----------
+document.querySelectorAll('.tabs button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('.tabs button').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('section[data-pane]').forEach(x => x.classList.add('hidden'));
+    b.classList.add('active');
+    document.querySelector('section[data-pane="' + b.dataset.tab + '"]').classList.remove('hidden');
+  };
+});
+
+// ---------- REPs: probe + cadastro ----------
+$('p_probe').onclick = async () => {
+  const out = $('p_probe_out'); out.innerHTML = '';
+  try {
+    const r = await api('/api/reps/probe', {
+      method: 'POST',
+      body: JSON.stringify({ ip: $('p_ip').value, porta: Number($('p_porta').value),
+        usuario: $('p_user').value, senha: $('p_pass').value }),
+    });
+    const det = r.portaria ? `<span class="pill c">${r.portaria}</span>` : '<span class="pill am">portaria não detectada</span>';
+    out.innerHTML = `<div class="msg ok">Conectado ✔ ${det}
+      <div class="kv" style="margin-top:6px;">
+        <b>Modelo:</b> ${r.modelo || '-'} &nbsp; <b>Serial:</b> ${r.serial || '-'}<br/>
+        <b>Firmware:</b> ${r.firmware || '-'} (${r.firmwareHex || '-'}) &nbsp; <b>Facial:</b> ${r.isFacial ? 'sim' : 'não'}<br/>
+        <b>Usuários:</b> ${r.usuarios ?? '-'} &nbsp; <b>Templates:</b> ${r.templates ?? '-'}
+      </div></div>`;
+    // preencher cadastro
+    const maxId = (await api('/api/reps')).reduce((m, x) => Math.max(m, x.id_Equipamento || 0), 0);
+    $('c_id').value = maxId + 1;
+    $('c_nome').value = (r.modelo || 'REP') + (r.serial ? ' ' + r.serial : '');
+    $('c_ip').value = $('p_ip').value;
+    $('c_porta').value = $('p_porta').value;
+    $('c_pass').value = $('p_pass').value;
+    if (r.portaria) $('c_tipo').value = r.portaria;
+    $('p_cadastro').style.display = 'block';
+  } catch (e) { setMsg(out, false, e.message); }
+};
+
+$('c_save').onclick = async () => {
+  try {
+    await api('/api/reps', {
+      method: 'POST',
+      body: JSON.stringify({
+        id_Equipamento: Number($('c_id').value),
+        Nome: $('c_nome').value,
+        IpAddress: $('c_ip').value,
+        Porta: Number($('c_porta').value),
+        Passcode: $('c_pass').value,
+        REPType: $('c_tipo').value,
+      }),
+    });
+    setMsg($('c_msg'), true, 'REP cadastrado.');
+    loadReps();
+  } catch (e) { setMsg($('c_msg'), false, e.message); }
+};
+
+async function loadReps() {
+  const box = $('r_list'); box.innerHTML = 'carregando…';
+  try {
+    const rows = await api('/api/reps');
+    if (!rows.length) { box.innerHTML = '<p class="muted">Nenhum REP cadastrado.</p>'; return; }
+    box.innerHTML = '<table><thead><tr><th>ID</th><th>Nome</th><th>IP:Porta</th><th>Tipo</th><th>Pessoas</th><th>Digitais</th></tr></thead><tbody>' +
+      rows.map(r => `<tr>
+        <td>${r.id_Equipamento}</td>
+        <td>${r.Nome || '-'}</td>
+        <td>${r.IpAddress || '-'}:${r.Porta ?? '-'}</td>
+        <td>${r.REPType ? `<span class="pill c">${r.REPType}</span>` : '-'}</td>
+        <td>${r.qtdePessoas ?? '-'}</td>
+        <td>${r.qtdeDigitais ?? '-'}</td>
+      </tr>`).join('') + '</tbody></table>';
+  } catch (e) { box.innerHTML = '<div class="msg err">' + e.message + '</div>'; }
+}
+$('r_refresh').onclick = loadReps;
+
+// ---------- Pessoas ----------
+$('u_port').onchange = () => {
+  $('u_doclabel').textContent = $('u_port').value === '671' ? 'CPF' : 'PIS';
+};
+$('u_send').onclick = async () => {
+  const port = $('u_port').value;
+  const doc = $('u_doc').value.replace(/\D/g, '');
+  const pessoa = {
+    nome: $('u_nome').value,
+    codigo: Number($('u_codigo').value || 0),
+    senha: $('u_senha').value,
+    matricula: Number($('u_matr').value || 0),
+  };
+  if (port === '671') pessoa.cpf = doc; else pessoa.pis = doc;
+  try {
+    const r = await api('/api/pessoas', {
+      method: 'POST',
+      body: JSON.stringify({
+        rep: { ip: $('u_ip').value, porta: Number($('u_porta').value),
+          portaria: port, usuario: $('u_user').value, senha: $('u_pass').value },
+        pessoa,
+      }),
+    });
+    setMsg($('u_msg'), true, 'Enviado ao REP ✔ idNuvem=' + (r.idNuvem ?? '-'));
+  } catch (e) { setMsg($('u_msg'), false, e.message); }
+};
+
+// ---------- AFD sync + export ----------
+$('a_sync').onclick = async () => {
+  try {
+    const r = await api('/api/afd/sync', {
+      method: 'POST',
+      body: JSON.stringify({
+        rep: { ip: $('a_ip').value, porta: Number($('a_porta').value),
+          usuario: $('a_user').value, senha: $('a_pass').value },
+        idEquipamento: Number($('a_eqp').value),
+        mode: $('a_mode').value,
+      }),
+    });
+    setMsg($('a_msg'), true, 'Sincronizado ✔ ' + JSON.stringify(r));
+  } catch (e) { setMsg($('a_msg'), false, e.message); }
+};
+
+$('e_exp').onclick = async () => {
+  try {
+    const res = await fetch(API + '/api/afd/export', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        idEquipamento: Number($('e_eqp').value || 0),
+        dataInicio: $('e_ini').value || undefined,
+        dataFim: $('e_fim').value || undefined,
+        serial: $('e_serial').value || undefined,
+      }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || ('HTTP ' + res.status)); }
+    const blob = await res.blob();
+    const fn = (res.headers.get('content-disposition') || '').match(/filename="([^"]+)"/);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fn ? fn[1] : 'AFD.txt';
+    a.click(); URL.revokeObjectURL(url);
+    setMsg($('e_msg'), true, 'Download iniciado.');
+  } catch (e) { setMsg($('e_msg'), false, e.message); }
+};
+
+applyAuth();
+</script>
+</body>
+</html>

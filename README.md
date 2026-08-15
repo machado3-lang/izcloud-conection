@@ -290,7 +290,7 @@ Use o `docker-compose.yml` (MySQL + Node) ou MySQL nativo.
 ## 11. Próximos passos sugeridos
 
 - Configurar REPCONFIG.exe com o IP público do iZCloud.
-- (Opcional) UI web mínima para cadastro/export (hoje é API-only).
+- ~~(Opcional) UI web mínima para cadastro/export~~ ✅ **feito** (`public/index.html` — SPA que consome `/api/*`).
 - Tratar `get_afd` paginado para REPs com AFD muito grande.
 - Backup por tenant: `mysqldump <schema>` de cada `tenant_XXXX`.
 
@@ -332,8 +332,9 @@ Esta seção registra a análise e as alterações feitas, para retomada futura.
 | Validação | local | `node --check` OK em `server/core/sync/repClient`; app sobe e `/api/health` → `{"status":"ok","multiTenant":true}`. |
 
 ### 12.4 Pendências conhecidas (não bloqueiam deploy básico)
-- **Sem UI** — só API (README já reconhece). Operação por `curl`/Postman ou
-  sistema externo (estilo iDCloud/Secullum).
+- **UI web mínima** — adicionada em `public/index.html` (SPA vanilla que consome
+   `/api/*`): login (JWT) + telas de REPs (sondar/cadastrar), Pessoas (enviar ao
+   REP) e AFD (sincronizar/exportar). Antes era API-only.
 - **TLS** — app escuta HTTP 3100 puro; em produção colocar atrás de proxy HTTPS.
 - **Paginação de `get_afd`** — REPs com AFD muito grande podem estourar; tratar.
 - **`baixarMarcacoes`** (usa `get_markings`, comando não documentado) — **removido**
@@ -415,9 +416,8 @@ O Railway fornece **domínio, mas NÃO IP fixo**. Portanto:
 
 ### 13.4 URL de produção e verificação
 - URL gerada (exemplo): `https://izcloud-conection-production.up.railway.app`
-- **`GET /`** agora retorna um JSON de status (`service`, `status`, `health`,
-  `repo`) — antes dava "Cannot GET /" pois não havia rota raiz; o app já estava
-  no ar, só não tinha handler para `/`.
+- **`GET /`** serve a **UI web** (SPA em `public/index.html`): login + telas de
+  REPs, Pessoas e AFD. Antes dava "Cannot GET /" (sem rota raiz).
 - **Healthcheck:** `GET /api/health` → `{"status":"ok","service":"iZCloud",
   "multiTenant":true}` (usado pelo `railway.toml`).
 - Teste rápido:
