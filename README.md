@@ -362,3 +362,50 @@ Passos (resumo):
   `dotenv/config`). Para `node server.js` direto também funciona.
 - Precisa de MySQL acessível em `IDCLOUD_HOST` para rotas de DB.
 
+---
+
+## 13. Deploy no Railway (definido)
+
+Decisão: subir no **Railway** a partir deste repo GitHub (Oracle Cloud Free foi
+descartado — não conseguimos criar a conta). O Railway faz **auto-deploy a cada
+`push` no `main`** (integração GitHub nativa, sem GitHub Actions).
+
+### 13.1 Ressalva crítica (modo de integração)
+O Railway fornece **domínio, mas NÃO IP fixo**. Portanto:
+- ❌ **Modo "REP empurra"** (você aponta o IP do servidor no REP via `REPCONFIG.exe`)
+  **não funciona** no Railway — o REP precisa de um IP fixo para apontar.
+- ✅ **Modo FCGI IP-direto** funciona: o iZCloud **puxa** do REP a cada 60s
+  (`poller` em `sync.js`). O REP deve ter IP alcançável a partir da nuvem e é
+  cadastrado pelo **próprio IP dele** em `/api/reps/probe` (não o contrário).
+- Se no futuro quiser o modo "REP empurra", migrar para VM com IP fixo
+  (ex.: Oracle Cloud Free) — ver §12.5.
+
+### 13.2 Passos
+1. Railway → **New Project** → **Deploy from GitHub repo** →
+   `machado3-lang/izcloud-conection`. Conecta e auto-deploya em cada push.
+2. **Add a MySQL**: no projeto, adicione um serviço **Database → MySQL**.
+   Anote host/porta/usuário/senha (Railway expõe como `DATABASE_URL` ou variáveis
+   `MYSQL_*`).
+3. No serviço **iZCloud**, defina as env vars (mapeando do MySQL do Railway):
+   - `IDCLOUD_HOST` = host do MySQL do Railway
+   - `IDCLOUD_PORT` = porta do MySQL do Railway
+   - `IDCLOUD_USER` = usuário do MySQL do Railway
+   - `IDCLOUD_PASS` = senha **forte** do MySQL do Railway
+   - `CORE_DB` = `izcloud_core`
+   - `JWT_SECRET` = segredo forte (gerado)
+   - `IZCLOUD_ADMIN_KEY` = chave de setup forte
+   - `PORT` = `3100` (Railway injeta `PORT`; o app usa `process.env.PORT || 3100`)
+4. O `schema_core.sql` cria `izcloud_core` se o Railway rodar o init; caso
+   contrário crie manualmente (`mysql ... < schema_core.sql`). Os **tenants** são
+   criados via `POST /api/auth/register` (ver §8/§10).
+5. A URL gerada pelo Railway (ex.: `https://izcloud-xxxx.up.railway.app`) é a
+   base da API. Use em `login`/`register`/etc.
+
+### 13.3 Observações
+- O app lê `process.env` (Railway injeta); o `.env` do repo é **ignorado** — não
+  commitar segredos.
+- `railway.toml` fixa o `Dockerfile` e o healthcheck em `/api/health`.
+- Para testar o fluxo: `login` → `/api/reps/probe` (IP do REP alcançável) →
+  `/api/reps` → `/api/afd/sync`.
+
+

@@ -1,0 +1,9 @@
+# railway.toml — iZCloud (deploy via GitHub, auto a cada push no main)
+[build]
+builder = "dockerfile"
+dockerfile = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/api/health"
+healthcheckTimeout = 100
+restart = true
