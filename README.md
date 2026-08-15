@@ -336,8 +336,8 @@ Esta seção registra a análise e as alterações feitas, para retomada futura.
   sistema externo (estilo iDCloud/Secullum).
 - **TLS** — app escuta HTTP 3100 puro; em produção colocar atrás de proxy HTTPS.
 - **Paginação de `get_afd`** — REPs com AFD muito grande podem estourar; tratar.
-- **`baixarMarcacoes`** usa `get_markings` (comando não documentado da ControlID)
-  — código morto/risco; remover ou validar no firmware alvo.
+- **`baixarMarcacoes`** (usa `get_markings`, comando não documentado) — **removido**
+  em 2026-08 (código morto/risco; não usado em nenhum fluxo).
 - **MySQL não instalado na máquina local** — para rodar 100% local precisa de um
   MySQL 8 (pode ser o do `docker-compose.yml`).
 

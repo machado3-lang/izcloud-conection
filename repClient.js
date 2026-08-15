@@ -142,18 +142,4 @@ function primeiraBatida(r) {
   return String(txt).split(/\r?\n/).map(l => l.trim()).filter(Boolean).find(l => l[9] === '3') || null;
 }
 
-export async function baixarMarcacoes(ip, porta, usuario = 'admin', senha = 'admin') {
-  const sess = await login(ip, porta, usuario, senha);
-  const all = [];
-  let offset = 0;
-  const limit = 200;
-  let hasMore = true;
-  while (hasMore) {
-    const r = await proxyREP(ip, porta, 'get_markings', { session: sess, limit, offset });
-    const batch = Array.isArray(r) ? r : (r?.markings || r?.cuts || r?.marcacoes || []);
-    all.push(...batch);
-    if (batch.length < limit) hasMore = false;
-    offset += limit;
-  }
-  return all;
-}
+
