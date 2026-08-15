@@ -23,6 +23,13 @@ app.use(express.json({ limit: '50mb' }));
 
 const PORT = process.env.PORT || 3100;
 
+app.get('/', (_, res) => res.json({
+  service: 'iZCloud',
+  status: 'ok',
+  health: '/api/health',
+  repo: 'https://github.com/machado3-lang/izcloud-conection',
+}));
+
 app.get('/api/health', (_, res) => res.json({ status: 'ok', service: 'iZCloud', multiTenant: true }));
 
 // ---------- Autenticacao / Tenants ----------

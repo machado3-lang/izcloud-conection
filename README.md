@@ -383,6 +383,11 @@ O Railway fornece **domínio, mas NÃO IP fixo**. Portanto:
 ### 13.2 Passos
 1. Railway → **New Project** → **Deploy from GitHub repo** →
    `machado3-lang/izcloud-conection`. Conecta e auto-deploya em cada push.
+   - Se o Railway acusar **"git repo not found"**: é permissão do *GitHub App* do
+     Railway, não o repo (que existe). No GitHub: avatar → Settings →
+     **Integrations** → app **Railway** → **Repository access** → marque
+     `izcloud-conection` (ou *All repositories*) → Save. Depois reconecte o repo
+     no Railway. Repo privado exige esse acesso; repo público basta reconectar.
 2. **Add a MySQL**: no projeto, adicione um serviço **Database → MySQL**.
    Anote host/porta/usuário/senha (Railway expõe como `DATABASE_URL` ou variáveis
    `MYSQL_*`).
@@ -407,5 +412,32 @@ O Railway fornece **domínio, mas NÃO IP fixo**. Portanto:
 - `railway.toml` fixa o `Dockerfile` e o healthcheck em `/api/health`.
 - Para testar o fluxo: `login` → `/api/reps/probe` (IP do REP alcançável) →
   `/api/reps` → `/api/afd/sync`.
+
+### 13.4 URL de produção e verificação
+- URL gerada (exemplo): `https://izcloud-conection-production.up.railway.app`
+- **`GET /`** agora retorna um JSON de status (`service`, `status`, `health`,
+  `repo`) — antes dava "Cannot GET /" pois não havia rota raiz; o app já estava
+  no ar, só não tinha handler para `/`.
+- **Healthcheck:** `GET /api/health` → `{"status":"ok","service":"iZCloud",
+  "multiTenant":true}` (usado pelo `railway.toml`).
+- Teste rápido:
+  ```
+  curl https://izcloud-conection-production.up.railway.app/api/health
+  ```
+
+### 13.5 IP fixo na frente do Railway (via Cloudflare) — modo "REP empurra"
+O Railway só dá domínio, sem IP fixo, então o REP **não consegue apontar** para
+ele via `REPCONFIG.exe` (precisa de IP). Plano: colocar o **Cloudflare** à frente
+da URL do Railway para expor um **IP fixo** (TCP) que o REP aponta.
+- O REP fala FCGI **HTTPS na porta 443**; precisa de um IP estático que encaminhe
+  TCP 443 → URL do Railway.
+- Opção viável: **Cloudflare Spectrum** (IPs estáticos para TCP por porta) —
+  criar um Spectrum app apontando para `izcloud-conection-production.up.railway.app:443`.
+  (Cloudflare Tunnel/`cloudflared` dá domínio, não IP fixo — insuficiente sozinho
+  para o REP, que exige IP.)
+- Após o IP fixo do Cloudflare, use-o no `REPCONFIG.exe` (campo iDCloud) em vez
+  do domínio do Railway.
+- **Sem IP fixo**, continue no modo **FCGI IP-direto** (iZCloud puxa do REP a
+  cada 60s): cadastre o REP pelo IP dele em `/api/reps/probe`.
 
 
