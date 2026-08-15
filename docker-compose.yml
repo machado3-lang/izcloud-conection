@@ -1,0 +1,42 @@
+# docker-compose.yml — iZCloud (MySQL + Node)
+# Recomendado para deploy em Oracle Cloud Free (VM sempre-on + IP estatico).
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${IDCLOUD_PASS:-senha_forte_aqui}
+      MYSQL_DATABASE: ${CORE_DB:-izcloud_core}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./schema_core.sql:/docker-entrypoint-initdb.d/schema_core.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${IDCLOUD_PASS:-senha_forte_aqui}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  izcloud:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      IDCLOUD_HOST: mysql
+      IDCLOUD_PORT: 3306
+      IDCLOUD_USER: root
+      IDCLOUD_PASS: ${IDCLOUD_PASS:-senha_forte_aqui}
+      CORE_DB: ${CORE_DB:-izcloud_core}
+      JWT_SECRET: ${JWT_SECRET:-trocavel_em_producao}
+      IZCLOUD_ADMIN_KEY: ${IZCLOUD_ADMIN_KEY:-chave_setup}
+      PORT: 3100
+    ports:
+      - "3100:3100"
+
+volumes:
+  mysql_data:

@@ -1,0 +1,8 @@
+# segredos e ambiente
+.env
+
+# dependencias
+node_modules/
+
+# arquivos AFD importados (volumosos, gerados em runtime)
+data/afd/
