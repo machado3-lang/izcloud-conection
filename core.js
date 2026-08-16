@@ -48,7 +48,7 @@ export function getTenantPool(schemaName) {
 }
 
 // ---- Senha (scrypt, nativo do Node; sem dependencias externas) ----
-function hashPassword(senha) {
+export function hashPassword(senha) {
   const salt = crypto.randomBytes(16).toString('hex');
   const hash = crypto.scryptSync(senha, salt, 64).toString('hex');
   return `${salt}:${hash}`;
@@ -95,15 +95,56 @@ export async function criarCliente({ login, senha, nome_empresa, cnpj }) {
 
 export async function verificarCredenciais(login, senha) {
   const core = getCorePool();
+  // 1) conta da empresa (tenant root) — tambem usada por sistemas externos
   const [rows] = await core.query(
     'SELECT id_cliente, login, senha_hash, schema_name, nome_empresa, ativo FROM clientes WHERE login = ?',
     [login]
   );
-  if (!rows.length) return null;
-  const c = rows[0];
-  if (!c.ativo) return null;
-  if (!verifyPassword(senha, c.senha_hash)) return null;
-  return c;
+  if (rows.length) {
+    const c = rows[0];
+    if (c.ativo && verifyPassword(senha, c.senha_hash))
+      return { id_cliente: c.id_cliente, schema_name: c.schema_name, login: c.login,
+        nome_empresa: c.nome_empresa, tipo: 'empresa' };
+  }
+  // 2) operador (usuario do tenant) — so para login web (JWT)
+  const [ops] = await core.query(
+    'SELECT id_usuario, id_cliente, schema_name, login, senha_hash, nome, nivel, ativo FROM usuarios WHERE login = ?',
+    [login]
+  );
+  if (ops.length) {
+    const u = ops[0];
+    if (u.ativo && verifyPassword(senha, u.senha_hash))
+      return { id_cliente: u.id_cliente, schema_name: u.schema_name, login: u.login,
+        nome: u.nome, tipo: 'operador', nivel: u.nivel };
+  }
+  return null;
+}
+
+// ---- Usuarios/operadores do tenant (multi-usuario por empresa) ----
+export async function criarUsuario({ id_cliente, schema_name, login, senha, nome, nivel }) {
+  const core = getCorePool();
+  const [ex] = await core.query('SELECT id_usuario FROM usuarios WHERE login = ?', [login]);
+  if (ex.length) throw new Error('Login de usuario ja existe');
+  const [r] = await core.query(
+    'INSERT INTO usuarios (id_cliente, schema_name, login, senha_hash, nome, nivel, ativo, criado_em) VALUES (?, ?, ?, ?, ?, ?, 1, NOW())',
+    [id_cliente, schema_name, login, hashPassword(senha), nome || null, nivel || 'operador']
+  );
+  return { id_usuario: r.insertId, login };
+}
+
+export async function listarUsuarios(id_cliente) {
+  const core = getCorePool();
+  const [rows] = await core.query(
+    'SELECT id_usuario, login, nome, nivel, ativo, criado_em FROM usuarios WHERE id_cliente = ? ORDER BY id_usuario',
+    [id_cliente]
+  );
+  return rows;
+}
+
+export async function removerUsuario(id_cliente, id_usuario) {
+  const core = getCorePool();
+  await core.query('DELETE FROM usuarios WHERE id_cliente = ? AND id_usuario = ?', [id_cliente, id_usuario]);
+  return { ok: true };
 }
 
 export async function listarClientes() {

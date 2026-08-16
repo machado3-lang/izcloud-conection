@@ -76,7 +76,8 @@ export function iniciarPoller(getCore, getTenant, intervalMs = 60000) {
         const client = new IdCloudClient(tp);
         try {
           const [reps] = await tp.query(
-            "SELECT id_Equipamento, IpAddress, Porta, Passcode, REPType FROM equipamentos WHERE IpAddress IS NOT NULL"
+            "SELECT id_Equipamento, IpAddress, Porta, Passcode, REPType FROM equipamentos " +
+            "WHERE IpAddress IS NOT NULL AND (ModoConexao IS NULL OR ModoConexao = 'nuvem_puxa')"
           );
           for (const r of reps) {
             try {

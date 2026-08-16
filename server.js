@@ -10,8 +10,8 @@ import { probe, enviarUsuarios } from './repClient.js';
 import { IdCloudClient } from './idcloud.js';
 import { gerarPorPeriodo } from './afd.js';
 import { sincronizarAfd, iniciarPoller } from './sync.js';
-import { getCorePool, getTenantPool, criarCliente, listarClientes } from './core.js';
-import { login, authTenant, requireAdmin } from './auth.js';
+import { getCorePool, getTenantPool, criarCliente, listarClientes, criarUsuario, listarUsuarios, removerUsuario } from './core.js';
+import { login, authTenant, requireAdmin, requireTenantAdmin } from './auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const AFD_DIR = path.join(__dirname, 'data', 'afd');
@@ -56,6 +56,33 @@ app.post('/api/auth/login', (req, res) => {
   catch (e) { res.status(401).json({ error: e.message }); }
 });
 
+// ---------- Usuarios/operadores do tenant (multi-usuario por empresa) ----------
+// Apenas a conta da empresa ou um operador admin pode gerenciar.
+app.use('/api/auth/usuarios', authTenant, requireTenantAdmin);
+
+app.get('/api/auth/usuarios', async (req, res) => {
+  try { res.json(await listarUsuarios(req.tenant.id_cliente)); }
+  catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+app.post('/api/auth/usuarios', async (req, res) => {
+  try {
+    const r = await criarUsuario({
+      id_cliente: req.tenant.id_cliente, schema_name: req.tenant.schema,
+      login: req.body.login, senha: req.body.senha, nome: req.body.nome,
+      nivel: req.body.nivel === 'admin' ? 'admin' : 'operador',
+    });
+    res.json({ ok: true, ...r });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.delete('/api/auth/usuarios/:id', async (req, res) => {
+  try {
+    await removerUsuario(req.tenant.id_cliente, Number(req.params.id));
+    res.json({ ok: true });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
 // Todas as rotas abaixo exigem autenticacao e sao ESCOPADAS ao tenant do cliente.
 app.use('/api/reps', authTenant);
 app.use('/api/pessoas', authTenant);
@@ -69,15 +96,15 @@ app.post('/api/reps/probe', async (req, res) => {
 
 app.post('/api/reps', async (req, res) => {
   try {
-    const { id_Equipamento, Nome, IpAddress, Porta, Passcode, REPType } = req.body;
+    const { id_Equipamento, Nome, IpAddress, Porta, Passcode, REPType, ModoConexao } = req.body;
     const client = new IdCloudClient(req.db);
     await client.pool.query(
       `INSERT INTO equipamentos
-       (id_Equipamento, Nome, IpAddress, Porta, Passcode, REPType, DataAtualizacao)
-       VALUES (?, ?, ?, ?, ?, ?, NOW())
+       (id_Equipamento, Nome, IpAddress, Porta, Passcode, REPType, ModoConexao, DataAtualizacao)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
        ON DUPLICATE KEY UPDATE Nome=VALUES(Nome), IpAddress=VALUES(IpAddress),
-         Porta=VALUES(Porta), Passcode=VALUES(Passcode), REPType=VALUES(REPType)`,
-      [id_Equipamento, Nome, IpAddress, Porta, Passcode, REPType]
+         Porta=VALUES(Porta), Passcode=VALUES(Passcode), REPType=VALUES(REPType), ModoConexao=VALUES(ModoConexao)`,
+      [id_Equipamento, Nome, IpAddress, Porta, Passcode, REPType, ModoConexao || 'nuvem_puxa']
     );
     res.json({ ok: true });
   } catch (e) { res.status(502).json({ error: e.message }); }
@@ -99,7 +126,21 @@ app.post('/api/pessoas', async (req, res) => {
 });
 
 // ---------- AFD (escopo do tenant) ----------
-// Sincronizacao incremental manual/trig
+// Recepcao de AFD via "push" (modo rep_empurra): um REP/gateway encaminha as
+// linhas cruas para este endpoint. Idempotente via UNIQUE(id_Equipamento, NSR).
+app.post('/api/afd/push', async (req, res) => {
+  try {
+    const { idEquipamento, linhas, texto } = req.body;
+    const client = new IdCloudClient(req.db);
+    const arr = Array.isArray(linhas)
+      ? linhas.map(l => String(l).trim()).filter(Boolean)
+      : String(texto || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    await client.salvarAfd(idEquipamento, arr);
+    res.json({ ok: true, total: arr.length });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Sincronizacao incremental manual/trig (modo nuvem_puxa)
 app.post('/api/afd/sync', async (req, res) => {
   try {
     const { rep, idEquipamento, mode } = req.body;

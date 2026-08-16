@@ -24,6 +24,8 @@ serviço pago deles** e com controle total dos dados.
 | Export de AFD por período (para qualquer sistema/usuário) | ✅ implementado |
 | Import manual de AFD (ex.: sistema externo manda o arquivo) | ✅ implementado |
 | Fetch para sistemas externos (ex.: Secullum) | ✅ implementado |
+| **Multi-usuário por empresa** (conta da empresa + operadores admin/operador) | ✅ implementado |
+| **Modo de conexão por REP** (`nuvem_puxa` = iZCloud puxa; `rep_empurra` = REP empurra) | ✅ implementado |
 
 ---
 
@@ -83,10 +85,12 @@ Cada **cliente** (empresa) tem sua própria conta e enxerga **apenas os seus dad
 | Número do banco de dados | `schema_name` (enviado em `X-Client-DB`) |
 
 Dois modos de autenticação (`auth.js`):
-1. **Web**: `POST /api/auth/login` → `Authorization: Bearer <JWT>`.
-2. **Sistema externo**: `Authorization: Basic <user:pass>` + header
-   `X-Client-DB: <schema>`. O iZCloud valida credenciais **e** confere se o banco
-   informado pertence àquele cliente (impede ler dados de outro tenant).
+1. **Web**: `POST /api/auth/login` → `Authorization: Bearer <JWT>`. Aceita **tanto a conta da
+   empresa quanto operadores** do tenant (multi-usuário).
+2. **Sistema externo**: `Authorization: Basic <user:pass>` + header `X-Client-DB: <schema>`. O
+   iZCloud valida credenciais **e** confere se o banco informado pertence àquele cliente. **Somente a
+   conta da empresa** pode ser usada aqui (operadores são bloqueados — `403`), pois trata-se de
+   máquina-a-máquina com o "número do banco".
 
 Fluxo de criação de cliente: `POST /api/auth/register` (protegido por
 `IZCLOUD_ADMIN_KEY`) → cria o schema `tenant_XXXX`, roda `schema_tenant.sql` e
@@ -332,9 +336,12 @@ Esta seção registra a análise e as alterações feitas, para retomada futura.
 | Validação | local | `node --check` OK em `server/core/sync/repClient`; app sobe e `/api/health` → `{"status":"ok","multiTenant":true}`. |
 
 ### 12.4 Pendências conhecidas (não bloqueiam deploy básico)
-- **UI web mínima** — adicionada em `public/index.html` (SPA vanilla que consome
-   `/api/*`): login (JWT) + telas de REPs (sondar/cadastrar), Pessoas (enviar ao
-   REP) e AFD (sincronizar/exportar). Antes era API-only.
+- **UI web** — `public/index.html` (SPA vanilla, sem build, servida pelo Express):
+   login split-screen + layout sidebar glassmorphism (design system inspirado no
+   `pontoweb`: tokens Inter, gradiente azul→verde, blobs de fundo, `glass-card`,
+   `btn-primary` pill, ícones SVG estilo lucide, `toast` e `modal` de confirmação).
+   Telas: REPs (sondar/cadastrar/listar), Pessoas (enviar ao REP), AFD
+   (sincronizar/exportar) e Usuários (multi-usuário por empresa). Antes era API-only.
 - **TLS** — app escuta HTTP 3100 puro; em produção colocar atrás de proxy HTTPS.
 - **Paginação de `get_afd`** — REPs com AFD muito grande podem estourar; tratar.
 - **`baixarMarcacoes`** (usa `get_markings`, comando não documentado) — **removido**
@@ -362,6 +369,34 @@ Passos (resumo):
 - `.env` presente (segredos fortes); use `npm start` (carrega `.env` via
   `dotenv/config`). Para `node server.js` direto também funciona.
 - Precisa de MySQL acessível em `IDCLOUD_HOST` para rotas de DB.
+
+### 12.7 Multi-usuário e modo de conexão por REP (adicionado)
+- **Multi-usuário por empresa**: além da conta da empresa (`izcloud_core.clientes`),
+  cada tenant tem operadores em `izcloud_core.usuarios` (login global único, `nivel`
+  `admin`/`operador`). Web login aceita ambos (JWT carrega `tipo`/`nivel`). Sistemas
+  externos (Basic+`X-Client-DB`) só aceitam a conta da empresa. Gerenciamento via
+  `GET/POST /api/auth/usuarios` e `DELETE /api/auth/usuarios/:id` (exige empresa ou
+  admin). UI: aba **Usuários**.
+- **Modo de conexão por REP** (`equipamentos.ModoConexao`):
+  - `nuvem_puxa` (padrão): o poller de 60s **puxa** o AFD do REP via FCGI IP-direto.
+  - `rep_empurra`: o poller **não puxa**; os dados chegam via `POST /api/afd/push`
+    (idempotente). Requer que o REP aponte para a nuvem (IP fixo/Cloudflare, §13.5).
+    A UI marca o REP com pill `rep_empurra` e o poller o ignora no pull.
+- **Migrações p/ bancos já existentes** (rode no MySQL da nuvem):
+  ```sql
+  -- core (izcloud_core)
+  CREATE TABLE usuarios (
+    id_usuario INT AUTO_INCREMENT PRIMARY KEY,
+    id_cliente INT NOT NULL, schema_name VARCHAR(64) NOT NULL,
+    login VARCHAR(64) NOT NULL, senha_hash VARCHAR(255) NOT NULL,
+    nome VARCHAR(120), nivel ENUM('admin','operador') DEFAULT 'operador',
+    ativo BIT DEFAULT 1, criado_em DATETIME,
+    UNIQUE KEY uq_usuario_login (login), KEY idx_cliente (id_cliente)
+  );
+  -- cada tenant (tenant_XXXX)
+  ALTER TABLE equipamentos
+    ADD COLUMN ModoConexao ENUM('nuvem_puxa','rep_empurra') DEFAULT 'nuvem_puxa';
+  ```
 
 ---
 

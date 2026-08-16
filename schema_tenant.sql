@@ -16,8 +16,15 @@ CREATE TABLE IF NOT EXISTS equipamentos (
   Porta INT,
   Passcode VARCHAR(100),
   REPType CHAR(4),            -- '1510' ou '671' (auto-detectado ou manual)
+  ModoConexao ENUM('nuvem_puxa','rep_empurra') DEFAULT 'nuvem_puxa',
+        -- nuvem_puxa: iZCloud PUXA do REP (FCGI IP-direto, poller 60s)
+        -- rep_empurra: REP EMPURRA para a nuvem (exige IP fixo/Cloudflare;
+        --   o poller NAO puxa e os dados chegam via POST /api/afd/push)
   DataAtualizacao DATETIME
 );
+
+-- Para tenants ja criados (sem a coluna), rode:
+-- ALTER TABLE equipamentos ADD COLUMN ModoConexao ENUM('nuvem_puxa','rep_empurra') DEFAULT 'nuvem_puxa';
 
 -- Pessoas. PIS e CPF coexistem (confirmado no AFD Downloader).
 CREATE TABLE IF NOT EXISTS pessoas (

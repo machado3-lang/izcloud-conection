@@ -22,6 +22,9 @@ export function login(login, senha) {
     schema: c.schema_name,
     login: c.login,
     nome_empresa: c.nome_empresa,
+    // multi-usuario: distingue conta da empresa de operador do tenant
+    tipo: c.tipo,            // 'empresa' | 'operador'
+    nivel: c.nivel || null,  // 'admin' | 'operador' (so p/ operador)
     // "numero do banco" que sistemas externos (Secullum) usam:
     database: c.schema_name,
   };
@@ -31,34 +34,49 @@ export function login(login, senha) {
 export async function authTenant(req, res, next) {
   try {
     const auth = req.headers.authorization || '';
-    let id_cliente, schema, login;
+    let id_cliente, schema, login, tipo, nivel;
 
     if (auth.startsWith('Bearer ')) {
       const payload = jwt.verify(auth.slice(7), JWT_SECRET);
       id_cliente = payload.id_cliente;
       schema = payload.schema;
       login = payload.login;
+      tipo = payload.tipo;
+      nivel = payload.nivel;
     } else if (auth.startsWith('Basic ')) {
-      // Estilo iDCloud: usuario:senha + X-Client-DB (numero do banco)
+      // Estilo iDCloud: usuario:senha + X-Client-DB (numero do banco).
+      // Sistemas externos (Secullum) usam SO a conta da empresa, nunca operadores.
       const [u, p] = Buffer.from(auth.slice(6), 'base64').toString().split(':');
       const db = req.headers['x-client-db'];
       const c = verificarCredenciais(u, p);
       if (!c || c.schema_name !== db) {
         return res.status(403).json({ error: 'Credenciais ou banco invalidos' });
       }
+      if (c.tipo !== 'empresa') {
+        return res.status(403).json({ error: 'Acesso de sistema externo exige conta de empresa' });
+      }
       id_cliente = c.id_cliente;
       schema = c.schema_name;
       login = u;
+      tipo = c.tipo;
+      nivel = c.nivel || null;
     } else {
       return res.status(401).json({ error: 'Nao autenticado' });
     }
 
-    req.tenant = { id_cliente, schema, login };
+    req.tenant = { id_cliente, schema, login, tipo, nivel };
     req.db = getTenantPool(schema);
     next();
   } catch (e) {
     res.status(401).json({ error: 'Token invalido ou expirado' });
   }
+}
+
+// So a conta da empresa (tipo='empresa') ou um operador admin podem gerenciar usuarios.
+export function requireTenantAdmin(req, res, next) {
+  const t = req.tenant;
+  if (t && (t.tipo === 'empresa' || t.nivel === 'admin')) return next();
+  return res.status(403).json({ error: 'Apenas admin da empresa pode gerenciar usuarios' });
 }
 
 // Protege a criacao de clientes (setup). Use IZCLOUD_ADMIN_KEY no header.

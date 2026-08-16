@@ -29,7 +29,7 @@ export class IdCloudClient {
 
   // Equipamentos (somente leitura, conforme doc iDCloud)
   async listarEquipamentos() {
-    const [rows] = await this.pool.query('SELECT id_Equipamento, Nome, utc_Equipamento, statusPapel, qtdePessoas, qtdeDigitais FROM equipamentos');
+    const [rows] = await this.pool.query('SELECT id_Equipamento, Nome, utc_Equipamento, statusPapel, qtdePessoas, qtdeDigitais, IpAddress, Porta, REPType, ModoConexao FROM equipamentos');
     return rows;
   }
 
