@@ -94,3 +94,21 @@ CREATE TABLE IF NOT EXISTS sync_status (
   last_sync DATETIME,
   ativo BOOLEAN DEFAULT 1
 );
+
+-- Templates biometricos (digitais e faces) por pessoa.
+-- dados = template em base64 (formato do REP). um por (id_pessoa, tipo, indice).
+CREATE TABLE IF NOT EXISTS templates (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  id_pessoa INT NOT NULL,
+  tipo VARCHAR(20),        -- 'digital' | 'face'
+  indice INT,              -- dedo (1..10) ou slot de face
+  dados LONGTEXT,
+  DataAtualizacao DATETIME,
+  UNIQUE KEY uq_tpl (id_pessoa, tipo, indice),
+  KEY idx_pessoa (id_pessoa)
+);
+
+-- Para tenants ja criados (sem a tabela), rode:
+-- CREATE TABLE templates ( id BIGINT AUTO_INCREMENT PRIMARY KEY, id_pessoa INT NOT NULL,
+--   tipo VARCHAR(20), indice INT, dados LONGTEXT, DataAtualizacao DATETIME,
+--   UNIQUE KEY uq_tpl (id_pessoa, tipo, indice), KEY idx_pessoa (id_pessoa) );

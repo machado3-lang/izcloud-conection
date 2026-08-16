@@ -145,4 +145,48 @@ export class IdCloudClient {
       );
     }
   }
+
+  // Importa/atualiza um funcionario vindo da memoria do REP (por PIS/CPF).
+  async importarPessoa({ pis, cpf, nome, portaria }) {
+    const is671 = portaria === '671';
+    const col = is671 ? 'CPF' : 'PIS';
+    const val = cpf || pis;
+    const [ex] = await this.pool.query(`SELECT id_pessoa FROM pessoas WHERE ${col} = ?`, [val]);
+    if (ex.length) {
+      await this.pool.query('UPDATE pessoas SET Nome = ? WHERE id_pessoa = ?', [nome || null, ex[0].id_pessoa]);
+      return ex[0].id_pessoa;
+    }
+    const [r] = await this.pool.query(
+      `INSERT INTO pessoas (PIS, CPF, Nome, Codigo, Senha, Matricula, Admin, Excluido, ExcluidoDefinitivo, DataAtualizacao)
+       VALUES (?, ?, ?, 0, '1234', 0, 0, 0, 0, NOW())`,
+      [is671 ? null : (pis || null), is671 ? (cpf || null) : null, nome || null]
+    );
+    return r.insertId;
+  }
+
+  // Grava/atualiza um template biometrico (digital ou face) de uma pessoa.
+  async gravarTemplate(id_pessoa, tipo, indice, dados) {
+    if (!dados) return;
+    await this.pool.query(
+      `INSERT INTO templates (id_pessoa, tipo, indice, dados, DataAtualizacao) VALUES (?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE dados = VALUES(dados), DataAtualizacao = NOW()`,
+      [id_pessoa, tipo, indice, dados]
+    );
+  }
+
+  async listarTemplates(id_pessoa) {
+    const [rows] = await this.pool.query('SELECT tipo, indice, dados FROM templates WHERE id_pessoa = ?', [id_pessoa]);
+    return rows;
+  }
+
+  // Contagem de biometria por pessoa (para exibir na UI).
+  async contarBio() {
+    const [rows] = await this.pool.query('SELECT id_pessoa, tipo, COUNT(*) c FROM templates GROUP BY id_pessoa, tipo');
+    const m = {};
+    rows.forEach(r => {
+      m[r.id_pessoa] = m[r.id_pessoa] || { digital: 0, face: 0 };
+      if (r.tipo === 'face') m[r.id_pessoa].face = r.c; else m[r.id_pessoa].digital = r.c;
+    });
+    return m;
+  }
 }

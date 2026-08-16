@@ -6,7 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { probe, enviarUsuarios } from './repClient.js';
+import { probe, enviarUsuarios, lerUsuarios, mapearUsuario } from './repClient.js';
 import { IdCloudClient } from './idcloud.js';
 import { gerarPorPeriodo } from './afd.js';
 import { sincronizarAfd, iniciarPoller } from './sync.js';
@@ -173,6 +173,57 @@ app.get('/api/pessoas', async (req, res) => {
 app.get('/api/pessoas/vinculos', async (req, res) => {
   try { res.json(await new IdCloudClient(req.db).listarTodosVinculos()); }
   catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Contagem de biometria (digitais/faces) por pessoa
+app.get('/api/pessoas/biometria', async (req, res) => {
+  try { res.json(await new IdCloudClient(req.db).contarBio()); }
+  catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Importar usuarios + biometria DA memoria do REP para o iZCloud (e vincula ao REP)
+app.post('/api/pessoas/importar', async (req, res) => {
+  try {
+    const { rep, idEquipamento } = req.body;
+    const lista = await lerUsuarios(rep.ip, rep.porta || 443, rep.usuario || 'admin', rep.senha || 'admin');
+    const client = new IdCloudClient(req.db);
+    let pessoas = 0, templates = 0;
+    for (const u of lista) {
+      const m = mapearUsuario(u);
+      const idP = await client.importarPessoa({ pis: m.pis, cpf: m.cpf, nome: m.nome, portaria: m.tipo });
+      await client.vincularEquipamento(idP, idEquipamento);
+      for (const t of m.templates) { await client.gravarTemplate(idP, t.tipo, t.indice, t.dados); templates++; }
+      pessoas++;
+    }
+    res.json({ ok: true, pessoas, templates });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Enviar ao REP apenas os funcionarios VINCULADOS a ele (filtrado por equip_pessoa) + biometria
+app.post('/api/pessoas/sincronizar', async (req, res) => {
+  try {
+    const { rep, idEquipamento } = req.body;
+    const client = new IdCloudClient(req.db);
+    const [vin] = await client.pool.query('SELECT id_Pessoa FROM equip_pessoa WHERE id_Equipamento = ?', [idEquipamento]);
+    const users = [];
+    for (const { id_Pessoa } of vin) {
+      const [p] = await client.pool.query('SELECT id_pessoa, PIS, CPF, Nome, Codigo, Senha, Matricula FROM pessoas WHERE id_pessoa = ?', [id_Pessoa]);
+      if (!p.length) continue;
+      const pes = p[0];
+      const u = {
+        pis: pes.PIS, cpf: pes.CPF, name: pes.Nome,
+        registration: pes.Matricula || pes.Codigo || 0, code: pes.Codigo || 0,
+        password: pes.Senha || '1234',
+      };
+      const [tpl] = await client.pool.query('SELECT tipo, indice, dados FROM templates WHERE id_pessoa = ?', [id_Pessoa]);
+      u.templates = tpl.filter(t => t.tipo === 'digital').map(t => ({ finger: t.indice, template: t.dados }));
+      u.facial = tpl.filter(t => t.tipo === 'face').map(t => ({ faceTemplate: t.dados }));
+      users.push(u);
+    }
+    const portaria = users.some(u => u.cpf) ? '671' : '1510';
+    const r = await enviarUsuarios(rep.ip, rep.porta || 443, users, portaria, rep.usuario || 'admin', rep.senha || 'admin');
+    res.json({ ok: true, enviados: users.length, rep: r });
+  } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
 app.post('/api/pessoas', async (req, res) => {

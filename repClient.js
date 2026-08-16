@@ -71,6 +71,8 @@ export async function probe(ip, porta, usuario, senha) {
 }
 
 // Envia usuarios para a memoria do REP. 1510 -> PIS; 671 -> CPF.
+// Cada usuario pode trazer templates biometricos: u.templates = [{template, finger, type}]
+// e/ou faces: u.facial = [{faceTemplate}]. Enviados junto no add_users (quando o firmware aceita).
 export async function enviarUsuarios(ip, porta, usuarios, portaria, usuario = 'admin', senha = 'admin') {
   const sess = await login(ip, porta, usuario, senha);
   const sessEnc = encodeURIComponent(sess);
@@ -80,17 +82,48 @@ export async function enviarUsuarios(ip, porta, usuarios, portaria, usuario = 'a
     .map((u) => {
       const obj = {
         [idField]: parseInt(String(u[idField] || u.registration || '0').replace(/\D/g, '') || '0'),
-        name: u.name || '',
+        name: u.name || u.nome || '',
         registration: parseInt(String(u.registration || '0').replace(/\D/g, '') || '0'),
         code: parseInt(String(u.code || u.registration || '0').replace(/\D/g, '') || '0'),
         password: String(u.password || '1234'),
       };
+      if (Array.isArray(u.templates) && u.templates.length) obj.templates = u.templates;
+      if (Array.isArray(u.facial) && u.facial.length) obj.facial = u.facial;
       return obj;
     })
     .filter((u) => u[idField] > 0);
   if (payload.length === 0) throw new Error('Nenhum usuario com PIS/CPF valido');
   const r = await proxyREP(ip, porta, `add_users${qs}`, { users: payload });
   return r;
+}
+
+// Le usuarios (e biometria) da memoria do REP. Tenta load_users e, se vazio, get_users.
+export async function lerUsuarios(ip, porta, usuario = 'admin', senha = 'admin') {
+  const sess = await login(ip, porta, usuario, senha);
+  let r = await proxyREP(ip, porta, 'load_users', { session: sess }).catch(() => null);
+  if (!r || (!r.users && !Array.isArray(r))) {
+    r = await proxyREP(ip, porta, 'get_users', { session: sess }).catch(() => null);
+  }
+  return r?.users || (Array.isArray(r) ? r : []);
+}
+
+// Mapeia um usuario cru do REP para { pis, cpf, nome, tipo, templates[] } de forma defensiva.
+export function mapearUsuario(u) {
+  const pis = u.pis != null ? String(u.pis) : null;
+  const cpf = u.cpf != null ? String(u.cpf) : null;
+  const tipo = cpf ? '671' : '1510';
+  const nome = u.name || u.nome || '';
+  const templates = (u.templates || []).map((t) => ({
+    tipo: 'digital',
+    indice: t.finger != null ? t.finger : (t.indice != null ? t.indice : 0),
+    dados: t.template != null ? t.template : (t.data != null ? t.data : ''),
+  }));
+  const faces = (u.facial || u.faces || u.faceTemplates || []).map((f, i) => ({
+    tipo: 'face',
+    indice: i,
+    dados: f.faceTemplate != null ? f.faceTemplate : (f.template != null ? f.template : (f.data != null ? f.data : '')),
+  }));
+  return { pis, cpf, nome, tipo, templates: [...templates, ...faces].filter((t) => t.dados) };
 }
 
 export async function baixarAfd(ip, porta, dataInicio, dataFim, usuario = 'admin', senha = 'admin', mode) {

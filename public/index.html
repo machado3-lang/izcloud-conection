@@ -349,6 +349,21 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
           </div>
           <button class="btn-primary" id="u_send" style="margin-top:14px;">Enviar pessoa</button>
         </div>
+
+        <div class="glass-card" style="margin-top:1.5rem;">
+          <h3><span id="h-sync2"></span> Sincronização com o REP (biometria)</h3>
+          <p class="muted" style="margin-bottom:12px;">Conecte-se ao REP e importe funcionários/biometria da memória dele, ou envie ao REP apenas os funcionários vinculados (filtrado por vínculo).</p>
+          <div class="row">
+            <div><label class="fld">REP (IP)</label><input id="s_ip" class="form-input" placeholder="192.168.100.132" /></div>
+            <div><label class="fld">Porta</label><input id="s_porta" class="form-input" value="443" /></div>
+            <div><label class="fld">Usuário</label><input id="s_user" class="form-input" value="admin" /></div>
+            <div><label class="fld">Senha</label><input id="s_pass" type="password" class="form-input" value="admin" /></div>
+          </div>
+          <div class="row" style="align-items:center;margin-top:14px;">
+            <button class="btn-primary" id="s_import" type="button">Importar do REP</button>
+            <button class="btn-primary" id="s_push" type="button">Enviar vinculados ao REP</button>
+          </div>
+        </div>
       </section>
 
       <!-- AFD -->
@@ -480,6 +495,7 @@ function mountIcons() {
   $('h-sync').innerHTML = ic('refresh', 16);
   $('h-exp').innerHTML = ic('download', 16);
   $('h-user').innerHTML = ic('user', 16);
+  $('h-sync2').innerHTML = ic('refresh', 16);
 }
 
 // ---------- helpers ----------
@@ -734,18 +750,26 @@ async function loadReps() {
 $('r_refresh').onclick = loadReps;
 
 // ---------- Funcionários: vínculo ----------
-let V_REP = 0, V_PESSOAS = [], V_VINC = [], V_REPS = [], V_PENDING = null;
+let V_REP = 0, V_PESSOAS = [], V_VINC = [], V_REPS = [], V_PENDING = null, BIO = {};
 async function carregarVinculo() {
   if (!temEmpresa()) { $('v_list').innerHTML = '<p class="muted">Selecione uma empresa.</p>'; return; }
   try {
     const [p, v, r] = await Promise.all([ api('/api/pessoas'), api('/api/pessoas/vinculos'), api('/api/reps') ]);
     V_PESSOAS = p; V_VINC = v; V_REPS = r;
+    BIO = await api('/api/pessoas/biometria');
     const sel = $('v_rep'); const keep = sel.value;
     sel.innerHTML = '<option value="0">— Todos os REPs —</option>' + r.map(x => `<option value="${x.id_Equipamento}">${x.id_Equipamento} · ${x.Nome || '-'}</option>`).join('');
     sel.value = keep; renderVinculo();
   } catch (e) { $('v_list').innerHTML = '<div class="msg err">' + e.message + '</div>'; }
 }
 function repNome(id) { const r = V_REPS.find(x => x.id_Equipamento === id); return r ? (r.Nome || ('REP ' + id)) : ('REP ' + id); }
+function bioPills(id) {
+  const b = BIO[id]; if (!b) return '<span class="muted">—</span>';
+  const parts = [];
+  if (b.digital) parts.push(`<span class="pill c">D:${b.digital}</span>`);
+  if (b.face) parts.push(`<span class="pill g">F:${b.face}</span>`);
+  return parts.length ? parts.join(' ') : '<span class="muted">—</span>';
+}
 function renderVinculo() {
   const box = $('v_list');
   if (!V_PESSOAS.length) { box.innerHTML = '<p class="muted">Nenhum funcionário cadastrado. Use o card abaixo para adicionar.</p>'; $('v_savebox').style.display = 'none'; return; }
@@ -757,18 +781,18 @@ function renderVinculo() {
         const reps = porPessoa[p.id_pessoa] || [];
         const pills = reps.length ? reps.map(id => `<span class="pill c">${repNome(id)}</span>`).join(' ') : '<span class="muted">— nenhum —</span>';
         const doc = p.CPF || p.PIS || '-';
-        return `<tr><td>${p.id_pessoa}</td><td>${p.Nome || '-'}</td><td>${doc}</td><td>${pills}</td></tr>`;
+        return `<tr><td>${p.id_pessoa}</td><td>${p.Nome || '-'}</td><td>${doc}</td><td>${bioPills(p.id_pessoa)}</td><td>${pills}</td></tr>`;
       }).join('') + '</tbody></table></div>';
   } else {
     if (V_PENDING === null) V_PENDING = new Set(porPessoa[V_REP] || []);
     const cur = V_PENDING; $('v_savebox').style.display = 'block';
-    box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr><th></th><th>ID</th><th>Nome</th><th>Doc</th><th>Também em</th></tr></thead><tbody>' +
+    box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr><th></th><th>ID</th><th>Nome</th><th>Doc</th><th>Bio</th><th>Também em</th></tr></thead><tbody>' +
       V_PESSOAS.map(p => {
         const checked = cur.has(p.id_pessoa) ? 'checked' : '';
         const outros = (porPessoa[p.id_pessoa] || []).filter(id => id !== V_REP);
         const pills = outros.length ? outros.map(id => `<span class="pill c">${repNome(id)}</span>`).join(' ') : '<span class="muted">—</span>';
         const doc = p.CPF || p.PIS || '-';
-        return `<tr><td><input type="checkbox" class="vchk" data-id="${p.id_pessoa}" ${checked}></td><td>${p.id_pessoa}</td><td>${p.Nome || '-'}</td><td>${doc}</td><td>${pills}</td></tr>`;
+        return `<tr><td><input type="checkbox" class="vchk" data-id="${p.id_pessoa}" ${checked}></td><td>${p.id_pessoa}</td><td>${p.Nome || '-'}</td><td>${doc}</td><td>${bioPills(p.id_pessoa)}</td><td>${pills}</td></tr>`;
       }).join('') + '</tbody></table></div>';
     box.querySelectorAll('.vchk').forEach(c => { c.onchange = () => { const id = Number(c.dataset.id); if (c.checked) V_PENDING.add(id); else V_PENDING.delete(id); }; });
   }
@@ -787,6 +811,25 @@ $('u_send').onclick = async () => {
   try {
     const r = await api('/api/pessoas', { method: 'POST', body: JSON.stringify({ rep: { ip: $('u_ip').value, porta: Number($('u_porta').value), portaria: port, usuario: $('u_user').value, senha: $('u_pass').value }, pessoa }) });
     toast('Enviado ao REP ✔ idNuvem=' + (r.idNuvem ?? '-'), 'success');
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+// Importar do REP (memoria -> iZCloud) e enviar vinculados (iZCloud -> REP)
+$('s_import').onclick = async () => {
+  if (!temEmpresa()) { toast('Selecione uma empresa.', 'error'); return; }
+  if (V_REP === 0) { toast('Selecione um REP para vincular os importados.', 'error'); return; }
+  try {
+    const r = await api('/api/pessoas/importar', { method: 'POST', body: JSON.stringify({ rep: { ip: $('s_ip').value, porta: Number($('s_porta').value), usuario: $('s_user').value, senha: $('s_pass').value }, idEquipamento: V_REP }) });
+    toast(`Importado: ${r.pessoas} pessoas, ${r.templates} templates.`, 'success');
+    await carregarVinculo();
+  } catch (e) { toast(e.message, 'error'); }
+};
+$('s_push').onclick = async () => {
+  if (!temEmpresa()) { toast('Selecione uma empresa.', 'error'); return; }
+  if (V_REP === 0) { toast('Selecione um REP para enviar os vinculados.', 'error'); return; }
+  try {
+    const r = await api('/api/pessoas/sincronizar', { method: 'POST', body: JSON.stringify({ rep: { ip: $('s_ip').value, porta: Number($('s_porta').value), usuario: $('s_user').value, senha: $('s_pass').value }, idEquipamento: V_REP }) });
+    toast(`Enviados ${r.enviados} funcionarios ao REP.`, 'success');
   } catch (e) { toast(e.message, 'error'); }
 };
 

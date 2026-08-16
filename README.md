@@ -441,6 +441,23 @@ Passos (resumo):
   Sem a migração, o login web (que agora usa `contas`) não acha as empresas antigas —
   crie a conta e linke via `id_conta`.
 
+### 12.10 Fase 2 — biometria (ler/gravar) + push filtrado por vínculo
+- Tabela `templates` (tenant): digitais e faces por pessoa (`tipo`, `indice`, `dados` base64).
+  Migração p/ tenants ja criados: rode o `CREATE TABLE templates ...` no fim do `schema_tenant.sql`.
+- `repClient.lerUsuarios` (`load_users`, com fallback `get_users`) + `mapearUsuario`
+  (parsing defensivo de `templates[]` e `facial[]`). `enviarUsuarios` agora repassa
+  `templates`/`facial` no `add_users`.
+- Rotas (escopo da empresa ativa): `POST /api/pessoas/importar` (REP → iZCloud, vincula ao
+  REP), `POST /api/pessoas/sincronizar` (envia **só os funcionários vinculados** ao REP
+  selecionado + suas biometrias), `GET /api/pessoas/biometria` (contagem D:/F:).
+- UI (aba Funcionários): card "Sincronização com o REP" com **Importar do REP** e
+  **Enviar vinculados ao REP**, e coluna **Bio** (D:x F:y) nas tabelas.
+- ⚠️ **Validação de firmware**: os nomes de campo de template
+  (`templates[].template/finger/type`, `facial[].faceTemplate`) e o envio em `add_users`
+  variam conforme o firmware do REP. Testar no REP de homologação (192.168.100.132) e
+  ajustar `mapearUsuario`/`enviarUsuarios` se necessário. O import/push não depende de
+  MySQL para falar com o REP (apenas para gravar no tenant).
+
 ## 13. Deploy no Railway (definido)
 
 Decisão: subir no **Railway** a partir deste repo GitHub (Oracle Cloud Free foi
