@@ -74,14 +74,84 @@ async function runScript(pool, sql) {
 }
 
 // ---- CRUD de clientes (tenants) ----
-export async function criarCliente({ login, senha, nome_empresa, cnpj }) {
+// ---- Conta do cliente do iZCloud (login web; pode ter varias empresas) ----
+export async function criarConta({ login, senha, nome }) {
+  const core = getCorePool();
+  const [ex] = await core.query('SELECT id_conta FROM contas WHERE login = ?', [login]);
+  if (ex.length) throw new Error('Login ja existe');
+  const [r] = await core.query(
+    'INSERT INTO contas (login, senha_hash, nome, ativo, criado_em) VALUES (?, ?, ?, 1, NOW())',
+    [login, hashPassword(senha), nome || null]
+  );
+  return { id_conta: r.insertId, login };
+}
+
+export async function verificarConta(login, senha) {
+  const core = getCorePool();
+  const [rows] = await core.query('SELECT id_conta, login, senha_hash, nome, ativo FROM contas WHERE login = ?', [login]);
+  if (!rows.length) return null;
+  const c = rows[0];
+  if (!c.ativo) return null;
+  if (!verifyPassword(senha, c.senha_hash)) return null;
+  return { id_conta: c.id_conta, login: c.login, nome: c.nome };
+}
+
+export async function listarEmpresas(id_conta) {
+  const core = getCorePool();
+  const [rows] = await core.query(
+    'SELECT id_cliente, schema_name, razao_social, nome_empresa, cnpj, endereco, responsavel_nome, responsavel_cpf FROM clientes WHERE id_conta = ? AND ativo = 1 ORDER BY id_cliente',
+    [id_conta]
+  );
+  return rows.map(r => ({
+    id_cliente: r.id_cliente, schema: r.schema_name,
+    razao_social: r.razao_social, nome_empresa: r.nome_empresa,
+    cnpj: r.cnpj, endereco: r.endereco, responsavel_nome: r.responsavel_nome, responsavel_cpf: r.responsavel_cpf,
+  }));
+}
+
+// ---- Empresa (tenant) vinculada a uma conta ----
+export async function criarEmpresa({ id_conta, login, senha, nome_empresa, razao_social, cnpj, endereco, responsavel_nome, responsavel_cpf }) {
+  const core = getCorePool();
+  if (!login) throw new Error('Login da empresa e obrigatorio (acesso via API)');
+  const [ex] = await core.query('SELECT id_cliente FROM clientes WHERE login = ?', [login]);
+  if (ex.length) throw new Error('Login da empresa ja existe');
+  const [r] = await core.query(
+    `INSERT INTO clientes (id_conta, login, senha_hash, schema_name, razao_social, nome_empresa, cnpj, endereco, responsavel_nome, responsavel_cpf, ativo, criado_em)
+     VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, 1, NOW())`,
+    [id_conta, login, hashPassword(senha), razao_social || null, nome_empresa || null, cnpj || null, endereco || null, responsavel_nome || null, responsavel_cpf || null]
+  );
+  const id = r.insertId;
+  const schema = 'tenant_' + String(id).padStart(4, '0');
+  await core.query('UPDATE clientes SET schema_name = ? WHERE id_cliente = ?', [schema, id]);
+  await core.query(`CREATE DATABASE IF NOT EXISTS \`${schema}\``);
+  const tp = getTenantPool(schema);
+  await runScript(tp, fs.readFileSync(path.join(__dirname, 'schema_tenant.sql'), 'utf-8'));
+  return { id_cliente: id, schema, login };
+}
+
+export async function atualizarEmpresa(id_conta, id_cliente, campos) {
+  const core = getCorePool();
+  const [own] = await core.query('SELECT id_cliente FROM clientes WHERE id_cliente = ? AND id_conta = ?', [id_cliente, id_conta]);
+  if (!own.length) throw new Error('Empresa nao pertence a esta conta');
+  const cols = [], vals = [];
+  for (const k of ['razao_social', 'nome_empresa', 'cnpj', 'endereco', 'responsavel_nome', 'responsavel_cpf']) {
+    if (campos[k] !== undefined) { cols.push(`${k} = ?`); vals.push(campos[k]); }
+  }
+  if (!cols.length) return { ok: true };
+  vals.push(id_cliente);
+  await core.query('UPDATE clientes SET ' + cols.join(', ') + ' WHERE id_cliente = ?', vals);
+  return { ok: true };
+}
+
+export async function criarCliente({ login, senha, nome_empresa, cnpj, id_conta = null, razao_social = null, endereco = null, responsavel_nome = null, responsavel_cpf = null }) {
   const core = getCorePool();
   const [ex] = await core.query('SELECT id_cliente FROM clientes WHERE login = ?', [login]);
   if (ex.length) throw new Error('Login ja existe');
 
   const [r] = await core.query(
-    'INSERT INTO clientes (login, senha_hash, schema_name, nome_empresa, cnpj, ativo, criado_em) VALUES (?, ?, ?, ?, ?, 1, NOW())',
-    [login, hashPassword(senha), '', nome_empresa || null, cnpj || null]
+    `INSERT INTO clientes (id_conta, login, senha_hash, schema_name, razao_social, nome_empresa, cnpj, endereco, responsavel_nome, responsavel_cpf, ativo, criado_em)
+     VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, 1, NOW())`,
+    [id_conta, login, hashPassword(senha), razao_social, nome_empresa || null, cnpj || null, endereco, responsavel_nome, responsavel_cpf]
   );
   const id = r.insertId;
   const schema = 'tenant_' + String(id).padStart(4, '0');

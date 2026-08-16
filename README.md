@@ -410,6 +410,37 @@ Passos (resumo):
 - **Fase 2 (pendente):** push filtrado por vínculo + biometria (digitas/faces) e
   leitura (import) do REP — exige estender `repClient` (get_users/load_users/templates).
 
+### 12.9 Conta do cliente + várias empresas (modelo final de isolamento)
+- Cada **login** (tabela `contas`) é independente e só enxerga as **suas** empresas.
+  Um cliente pode ter várias empresas/filiais (cada uma = 1 `tenant_XXXX`).
+- `clientes` virou EMPRESA: ganhou `id_conta` (dono), `razao_social`, `endereco`,
+  `responsavel_nome`, `responsavel_cpf` (perfil completo). Mantém `login`/`senha_hash`
+  como **credencial de API externa** (Secullum) e `schema_name` ("número do banco").
+- Web login (`POST /api/auth/login`) autentica a **conta** e retorna `token` + lista
+  de empresas. Ao selecionar uma empresa, o front envia o header `X-Empresa: <schema>`
+  e todo o app (REPs/Funcionários/AFDs/Usuários) opera sobre aquele tenant. Trocar de
+  empresa = trocar o `X-Empresa`.
+- Cadastro self-service: `POST /api/auth/registro` (público) cria a conta (e opcionalmente
+  a 1ª empresa). Gestão de empresas: `GET/POST /api/empresas` (conta) e
+  `PUT /api/empresas/:id` (perfil). UI: topo com seletor de empresa + cartão de perfil
+  (razão social, CNPJ, endereço, responsável) e modal de cadastro/edição.
+- **Migração p/ core já existente** (rode no MySQL da nuvem):
+  ```sql
+  CREATE TABLE contas ( id_conta INT AUTO_INCREMENT PRIMARY KEY, login VARCHAR(64) NOT NULL UNIQUE,
+    senha_hash VARCHAR(255) NOT NULL, nome VARCHAR(120), ativo BIT DEFAULT 1, criado_em DATETIME );
+  ALTER TABLE clientes
+    ADD COLUMN id_conta INT,
+    ADD COLUMN razao_social VARCHAR(160),
+    ADD COLUMN endereco VARCHAR(200),
+    ADD COLUMN responsavel_nome VARCHAR(120),
+    ADD COLUMN responsavel_cpf VARCHAR(20);
+  -- (Opcional) vincular empresas ja existentes a uma conta:
+  --   INSERT INTO contas (login, senha_hash, nome) VALUES ('admin', '<hash scrypt>', 'Migracao');
+  --   UPDATE clientes SET id_conta = (SELECT id_conta FROM contas WHERE login='admin') WHERE id_conta IS NULL;
+  ```
+  Sem a migração, o login web (que agora usa `contas`) não acha as empresas antigas —
+  crie a conta e linke via `id_conta`.
+
 ## 13. Deploy no Railway (definido)
 
 Decisão: subir no **Railway** a partir deste repo GitHub (Oracle Cloud Free foi

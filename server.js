@@ -10,8 +10,8 @@ import { probe, enviarUsuarios } from './repClient.js';
 import { IdCloudClient } from './idcloud.js';
 import { gerarPorPeriodo } from './afd.js';
 import { sincronizarAfd, iniciarPoller } from './sync.js';
-import { getCorePool, getTenantPool, criarCliente, listarClientes, criarUsuario, listarUsuarios, removerUsuario } from './core.js';
-import { login, authTenant, requireAdmin, requireTenantAdmin } from './auth.js';
+import { getCorePool, getTenantPool, criarCliente, listarClientes, criarUsuario, listarUsuarios, removerUsuario, criarConta, verificarConta, listarEmpresas, criarEmpresa, atualizarEmpresa } from './core.js';
+import { login, authTenant, authConta, requireAdmin, requireTenantAdmin } from './auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const AFD_DIR = path.join(__dirname, 'data', 'afd');
@@ -50,10 +50,45 @@ app.get('/api/auth/clientes', requireAdmin, async (_, res) => {
   try { res.json(await listarClientes()); } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
-// Login -> JWT + "numero do banco" do cliente (estilo iDCloud)
-app.post('/api/auth/login', (req, res) => {
-  try { res.json(login(req.body.login, req.body.senha)); }
+// Login -> JWT de CONTA + lista de empresas da conta (estilo iZCloud)
+app.post('/api/auth/login', async (req, res) => {
+  try { res.json(await login(req.body.login, req.body.senha)); }
   catch (e) { res.status(401).json({ error: e.message }); }
+});
+
+// Registro publico: cria a CONTA do cliente e (opcional) a 1a empresa.
+app.post('/api/auth/registro', async (req, res) => {
+  try {
+    const { login: loginU, senha, nome, empresa } = req.body;
+    const c = await criarConta({ login: loginU, senha, nome });
+    if (empresa && empresa.login) {
+      await criarEmpresa({ id_conta: c.id_conta, ...empresa });
+    }
+    // reaproveita o login para retornar token + empresas
+    res.json(await login(loginU, senha));
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ---------- Empresas (escopo da CONTA) ----------
+app.use('/api/empresas', authConta);
+
+app.get('/api/empresas', async (req, res) => {
+  try { res.json(await listarEmpresas(req.conta.id_conta)); }
+  catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+app.post('/api/empresas', async (req, res) => {
+  try {
+    const r = await criarEmpresa({ id_conta: req.conta.id_conta, ...req.body });
+    res.json({ ok: true, ...r });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.put('/api/empresas/:id', async (req, res) => {
+  try {
+    await atualizarEmpresa(req.conta.id_conta, Number(req.params.id), req.body);
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 // ---------- Usuarios/operadores do tenant (multi-usuario por empresa) ----------

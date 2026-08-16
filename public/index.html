@@ -12,21 +12,16 @@
   --bg-secondary: #111827;
   --glass-bg: rgba(17, 24, 39, 0.7);
   --glass-border: rgba(255, 255, 255, 0.08);
-
-  /* Paleta iZCloud (nuvem: azul -> verde) */
   --accent-primary: #0ea5e9;
   --accent-secondary: #22c55e;
   --accent-tertiary: #ef4444;
   --accent-gradient: linear-gradient(135deg, #0ea5e9 0%, #22c55e 100%);
-
   --text-primary: #ffffff;
   --text-secondary: #94a3b8;
   --text-muted: #64748b;
-
   --success: #22c55e;
   --warning: #f59e0b;
   --danger: #ef4444;
-
   --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
   --radius-md: 12px;
   --radius-lg: 20px;
@@ -61,9 +56,23 @@ body {
 }
 .login-right { flex: 1; display: flex; align-items: center; justify-content: center; padding: 2rem; }
 .lbl { font-size: 0.85rem; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
+.link-btn { background: none; border: none; color: var(--accent-primary); cursor: pointer; font-size: 0.85rem; padding: 0; }
 
-/* ---------- App layout (sidebar + main) ---------- */
-.app-container { display: flex; height: 100vh; }
+/* ---------- App shell ---------- */
+.app-container { display: flex; flex-direction: column; height: 100vh; }
+.app-body { flex: 1; display: flex; min-height: 0; }
+
+.topbar {
+  display: flex; align-items: center; gap: 1rem; padding: 0.75rem 1.5rem;
+  background: var(--glass-bg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--glass-border); z-index: 20; flex-wrap: wrap;
+}
+.topbar .brand { display: flex; align-items: center; gap: 0.6rem; font-weight: 700; font-size: 1.05rem; }
+.brand-icon { width: 32px; height: 32px; background: var(--accent-gradient); border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; color: white; }
+.topbar .spacer { flex: 1; }
+.emp-select { max-width: 280px; }
+.emp-pill { padding: 0.3rem 0.7rem; border-radius: var(--radius-full); font-size: 0.78rem; background: rgba(14,165,233,0.15); color: var(--accent-primary); }
+.emp-pill.muted { background: rgba(255,255,255,0.05); color: var(--text-secondary); }
 
 .sidebar {
   width: 260px; flex-shrink: 0; background: var(--glass-bg);
@@ -72,10 +81,6 @@ body {
   padding: 2rem 1.5rem; display: flex; flex-direction: column; gap: 2rem; z-index: 10;
 }
 .brand { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; }
-.brand-icon {
-  width: 34px; height: 34px; background: var(--accent-gradient); border-radius: var(--radius-md);
-  display: flex; align-items: center; justify-content: center; color: white;
-}
 .nav-menu { display: flex; flex-direction: column; gap: 0.5rem; }
 .nav-item {
   display: flex; align-items: center; gap: 0.75rem; padding: 0.875rem 1rem;
@@ -101,6 +106,11 @@ body {
 }
 .glass-card:hover { transform: translateY(-2px); box-shadow: 0 12px 40px 0 rgba(0,0,0,0.4); }
 .glass-card h3 { margin: 0 0 1.25rem; font-size: 1.05rem; color: var(--accent-primary); display: flex; align-items: center; gap: 0.5rem; }
+
+.emp-card .ec-nome { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.5px; }
+.emp-card .ec-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-top: 1rem; }
+.emp-card .ec-item .k { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.emp-card .ec-item .v { font-size: 0.95rem; color: var(--text-primary); margin-top: 0.2rem; word-break: break-all; }
 
 /* ---------- Form ---------- */
 .row { display: flex; gap: 12px; flex-wrap: wrap; }
@@ -130,20 +140,17 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
 }
 .btn-danger { background: var(--danger); color: #fff; border: none; padding: 0.5rem 0.8rem; border-radius: var(--radius-md); cursor: pointer; }
 
-/* ---------- Mensagens inline (probe / login) ---------- */
 .msg { padding: 0.75rem 1rem; border-radius: var(--radius-md); margin: 1rem 0; font-size: 0.9rem; white-space: pre-wrap; }
 .msg.ok { background: rgba(34,197,94,0.12); border: 1px solid var(--success); color: #bbf7d0; }
 .msg.err { background: rgba(239,68,68,0.12); border: 1px solid var(--danger); color: #fecaca; }
 .kv { font-size: 12px; color: var(--text-secondary); }
 .kv b { color: var(--text-primary); font-weight: 600; }
 
-/* ---------- Pills / badges ---------- */
 .pill { display: inline-block; padding: 0.25rem 0.75rem; border-radius: var(--radius-full); font-size: 0.72rem; font-weight: 600; }
 .pill.c { background: rgba(14,165,233,0.15); color: var(--accent-primary); }
 .pill.g { background: rgba(34,197,94,0.15); color: var(--success); }
 .pill.am { background: rgba(245,158,11,0.15); color: var(--warning); }
 
-/* ---------- Table ---------- */
 .data-table-container { overflow-x: auto; margin-top: 1rem; }
 .data-table { width: 100%; border-collapse: separate; border-spacing: 0; text-align: left; }
 .data-table th {
@@ -154,13 +161,16 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
 .data-table tr { transition: background-color 0.2s ease; }
 .data-table tr:hover td { background-color: rgba(255,255,255,0.02); }
 
-/* ---------- Toast ---------- */
 #toast-box { position: fixed; top: 1rem; right: 1rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.5rem; max-width: 400px; }
 
-/* ---------- Animations ---------- */
-.fade-in { animation: fadeIn 0.5s ease forwards; }
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 9998; display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+}
+
 @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(14,165,233,0.4); } 70% { box-shadow: 0 0 0 16px rgba(14,165,233,0); } 100% { box-shadow: 0 0 0 0 rgba(14,165,233,0); } }
+.fade-in { animation: fadeIn 0.5s ease forwards; }
 .hidden { display: none !important; }
 .muted { color: var(--text-muted); }
 </style>
@@ -178,21 +188,23 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
       </div>
       <h2 style="font-size:3rem;font-weight:700;line-height:1.1;margin-bottom:1.5rem;">A nuvem própria<br/>do seu ponto.</h2>
       <p style="font-size:1.15rem;color:var(--text-secondary);max-width:420px;line-height:1.6;">
-        Gestão multi-empresa de REPs ControlID 1510/671. Portaria, pessoas e AFD — tudo na sua nuvem.
+        Gestão multi-empresa de REPs ControlID 1510/671. Cada conta gerencia suas empresas, REPs e funcionários de forma isolada.
       </p>
     </div>
   </div>
   <div class="login-right">
     <div class="glass-card fade-in" style="width:100%;max-width:420px;padding:3rem;">
-      <div style="text-align:center;margin-bottom:2rem;">
-        <h2 style="font-size:1.8rem;font-weight:600;margin-bottom:.5rem;">Bem-vindo de volta</h2>
-        <p style="color:var(--text-secondary)">Acesse o painel da sua empresa.</p>
+      <div style="text-align:center;margin-bottom:1.5rem;">
+        <h2 style="font-size:1.8rem;font-weight:600;margin-bottom:.5rem;" id="l_title">Bem-vindo de volta</h2>
+        <p style="color:var(--text-secondary)" id="l_subtitle">Acesse o painel da sua conta.</p>
       </div>
       <div id="l_msg"></div>
+
+      <!-- Entrar -->
       <form id="l_form" style="display:flex;flex-direction:column;gap:1.5rem;">
         <div style="display:flex;flex-direction:column;gap:.5rem;">
-          <label class="lbl"><span id="l-ico-user"></span> Login (empresa)</label>
-          <input id="l_login" class="form-input" placeholder="empresa1" autocomplete="username" />
+          <label class="lbl"><span id="l-ico-user"></span> Login (conta)</label>
+          <input id="l_login" class="form-input" placeholder="minha_conta" autocomplete="username" />
         </div>
         <div style="display:flex;flex-direction:column;gap:.5rem;">
           <label class="lbl"><span id="l-ico-lock"></span> Senha</label>
@@ -200,175 +212,220 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
         </div>
         <button type="submit" id="l_btn" class="btn-primary" style="padding:1rem;margin-top:1rem;font-size:1.05rem;">Entrar na plataforma</button>
       </form>
-      <div style="text-align:center;margin-top:2rem;font-size:.8rem;color:var(--text-muted)">☁ iZCloud — nuvem própria para REPs ControlID</div>
+
+      <!-- Criar conta -->
+      <form id="s_form" style="display:none;flex-direction:column;gap:1.5rem;">
+        <div style="display:flex;flex-direction:column;gap:.5rem;">
+          <label class="lbl">Login (conta)</label>
+          <input id="s_login" class="form-input" placeholder="minha_conta" />
+        </div>
+        <div style="display:flex;flex-direction:column;gap:.5rem;">
+          <label class="lbl">Nome</label>
+          <input id="s_nome" class="form-input" placeholder="Maria Souza" />
+        </div>
+        <div style="display:flex;flex-direction:column;gap:.5rem;">
+          <label class="lbl">Senha</label>
+          <input id="s_senha" type="password" class="form-input" placeholder="••••••" />
+        </div>
+        <button type="submit" id="s_btn" class="btn-primary" style="padding:1rem;margin-top:1rem;font-size:1.05rem;">Criar conta</button>
+      </form>
+
+      <div style="text-align:center;margin-top:1.5rem;font-size:.85rem;">
+        <button class="link-btn" id="toggle_signup" type="button">Não tem conta? Cadastre-se</button>
+      </div>
     </div>
   </div>
 </div>
 
-<!-- APP (sidebar + main) -->
+<!-- APP -->
 <div id="app" class="hidden app-container">
-  <aside class="sidebar">
-    <div class="brand">
-      <div class="brand-icon" id="brand-ico"></div>
-      <span style="font-size:1.15rem;font-weight:700;">iZCloud</span>
+  <header class="topbar">
+    <div class="brand"><div class="brand-icon" id="brand-ico"></div><span>iZCloud</span></div>
+    <div style="display:flex;align-items:center;gap:.5rem;">
+      <span class="muted" style="font-size:.8rem;">Empresa:</span>
+      <select id="empSelect" class="form-input emp-select"></select>
+      <button class="btn-ghost" id="emp_new" type="button">+ Nova</button>
     </div>
-    <nav class="nav-menu">
-      <button class="nav-item active" data-pane="reps"><span id="ni-reps"></span> REPs</button>
-      <button class="nav-item" data-pane="pessoas"><span id="ni-pessoas"></span> Funcionários</button>
-      <button class="nav-item" data-pane="afd"><span id="ni-afd"></span> AFD</button>
-      <button class="nav-item" data-pane="usuarios"><span id="ni-usuarios"></span> Usuários</button>
-    </nav>
-    <div style="margin-top:auto;display:flex;flex-direction:column;gap:.5rem;">
-      <div class="muted" id="who" style="font-size:.78rem;padding:0 .5rem;word-break:break-all;"></div>
-      <button class="nav-item" id="logout"><span id="ni-out"></span> Sair</button>
-    </div>
-  </aside>
+    <div class="spacer"></div>
+    <div id="top_perfil" class="emp-pill muted">—</div>
+    <button class="nav-item" id="logout" style="padding:.6rem 1rem;"><span id="ni-out"></span> Sair</button>
+  </header>
 
-  <main class="main-content">
-    <div class="header">
-      <div>
-        <div class="page-title" id="page-title">REPs</div>
-        <div class="page-subtitle" id="page-subtitle"></div>
-      </div>
-    </div>
+  <div class="app-body">
+    <aside class="sidebar">
+      <nav class="nav-menu">
+        <button class="nav-item active" data-pane="reps"><span id="ni-reps"></span> REPs</button>
+        <button class="nav-item" data-pane="pessoas"><span id="ni-pessoas"></span> Funcionários</button>
+        <button class="nav-item" data-pane="afd"><span id="ni-afd"></span> AFD</button>
+        <button class="nav-item" data-pane="usuarios"><span id="ni-usuarios"></span> Usuários</button>
+      </nav>
+    </aside>
 
-    <!-- REPs -->
-    <section data-pane="reps" class="fade-in">
-      <div class="glass-card">
-        <h3><span id="h-probe"></span> 1. Sondar REP (auto-detecta 1510/671)</h3>
-        <div class="row">
-          <div><label class="fld">IP do REP</label><input id="p_ip" class="form-input" placeholder="192.168.100.132" /></div>
-          <div><label class="fld">Porta</label><input id="p_porta" class="form-input" value="443" /></div>
-          <div><label class="fld">Usuário</label><input id="p_user" class="form-input" value="admin" /></div>
-          <div><label class="fld">Senha</label><input id="p_pass" type="password" class="form-input" value="admin" /></div>
-        </div>
-        <button class="btn-primary" id="p_probe" style="margin-top:14px;">Sondar</button>
-        <div id="p_probe_out"></div>
-      </div>
+    <main class="main-content">
+      <!-- Cartao da empresa (bem visivel acima) -->
+      <div id="empCard" class="glass-card"></div>
 
-      <div class="glass-card" id="p_cadastro" style="display:none;margin-top:1.5rem;">
-        <h3><span id="h-cad"></span> 2. Cadastrar REP na nuvem</h3>
-        <div class="row">
-          <div><label class="fld">id_Equipamento</label><input id="c_id" type="number" class="form-input" /></div>
-          <div><label class="fld">Nome</label><input id="c_nome" class="form-input" /></div>
-          <div><label class="fld">IpAddress</label><input id="c_ip" class="form-input" /></div>
-          <div><label class="fld">Porta</label><input id="c_porta" class="form-input" /></div>
-        </div>
-        <div class="row">
-          <div><label class="fld">Passcode (senha de comunicação)</label><input id="c_pass" type="password" class="form-input" /></div>
-          <div><label class="fld">REPType (portaria)</label>
-            <select id="c_tipo" class="form-input"><option value="1510">1510</option><option value="671">671</option></select>
-          </div>
-          <div><label class="fld">Modo de conexão</label>
-            <select id="c_modo" class="form-input">
-              <option value="nuvem_puxa">nuvem_puxa (iZCloud puxa do REP)</option>
-              <option value="rep_empurra">rep_empurra (REP empurra p/ nuvem)</option>
-            </select>
-          </div>
-        </div>
-        <button class="btn-primary" id="c_save" style="margin-top:14px;">Cadastrar</button>
-      </div>
-
-      <div class="glass-card" style="margin-top:1.5rem;">
-        <h3><span id="h-list"></span> REPs cadastrados</h3>
-        <button class="btn-ghost" id="r_refresh">Atualizar</button>
-        <div id="r_list" style="margin-top:10px;"></div>
-      </div>
-    </section>
-
-    <!-- Funcionários -->
-    <section data-pane="pessoas" class="hidden fade-in">
-      <div class="glass-card">
-        <h3><span id="h-vinc"></span> Vínculo REP × Funcionários</h3>
-        <p class="muted" style="margin-bottom:12px;">Selecione um REP para definir quais funcionários estão nele (subconjunto). "Todos" mostra, por funcionário, em quais REPs ele está.</p>
-        <div class="row" style="align-items:flex-end;">
-          <div style="flex:0 0 300px;">
-            <label class="fld">REP (equipamento)</label>
-            <select id="v_rep" class="form-input"><option value="0">— Todos os REPs —</option></select>
-          </div>
-          <div><button class="btn-ghost" id="v_refresh">Atualizar</button></div>
-        </div>
-        <div id="v_list" style="margin-top:14px;"></div>
-        <div id="v_savebox" style="margin-top:14px; display:none;">
-          <button class="btn-primary" id="v_save">Salvar vínculos deste REP</button>
+      <div class="header">
+        <div>
+          <div class="page-title" id="page-title">REPs</div>
+          <div class="page-subtitle" id="page-subtitle"></div>
         </div>
       </div>
 
-      <div class="glass-card" style="margin-top:1.5rem;">
-        <h3><span id="h-add"></span> Adicionar funcionário e enviar ao REP</h3>
-        <div class="row">
-          <div><label class="fld">REP (IP)</label><input id="u_ip" class="form-input" placeholder="192.168.100.132" /></div>
-          <div><label class="fld">Porta</label><input id="u_porta" class="form-input" value="443" /></div>
-          <div><label class="fld">Usuário REP</label><input id="u_user" class="form-input" value="admin" /></div>
-          <div><label class="fld">Senha REP</label><input id="u_pass" type="password" class="form-input" value="admin" /></div>
-        </div>
-        <div class="row">
-          <div><label class="fld">Portaria do REP</label>
-            <select id="u_port" class="form-input"><option value="1510">1510 (PIS)</option><option value="671">671 (CPF)</option></select>
-          </div>
-          <div><label class="fld" id="u_doclabel">PIS</label><input id="u_doc" class="form-input" placeholder="12345678901" /></div>
-          <div><label class="fld">Nome</label><input id="u_nome" class="form-input" placeholder="João Silva" /></div>
-          <div><label class="fld">Matrícula</label><input id="u_matr" class="form-input" placeholder="1" /></div>
-        </div>
-        <div class="row">
-          <div><label class="fld">Senha de acesso (REP)</label><input id="u_senha" class="form-input" value="1234" /></div>
-          <div><label class="fld">Código</label><input id="u_codigo" class="form-input" placeholder="1" /></div>
-        </div>
-        <button class="btn-primary" id="u_send" style="margin-top:14px;">Enviar pessoa</button>
-      </div>
-    </section>
-
-    <!-- AFD -->
-    <section data-pane="afd" class="hidden fade-in">
-      <div class="glass-card">
-        <h3><span id="h-sync"></span> Sincronizar AFD (nuvem ← REP)</h3>
-        <div class="row">
-          <div><label class="fld">REP (IP)</label><input id="a_ip" class="form-input" placeholder="192.168.100.132" /></div>
-          <div><label class="fld">Porta</label><input id="a_porta" class="form-input" value="443" /></div>
-          <div><label class="fld">Usuário REP</label><input id="a_user" class="form-input" value="admin" /></div>
-          <div><label class="fld">Senha REP</label><input id="a_pass" type="password" class="form-input" value="admin" /></div>
-        </div>
-        <div class="row">
-          <div><label class="fld">id_Equipamento</label><input id="a_eqp" type="number" class="form-input" placeholder="1" /></div>
-          <div><label class="fld">Modo</label>
-            <select id="a_mode" class="form-input"><option value="1510">1510</option><option value="671">671</option></select>
-          </div>
-        </div>
-        <button class="btn-primary" id="a_sync" style="margin-top:14px;">Sincronizar agora</button>
-      </div>
-
-      <div class="glass-card" style="margin-top:1.5rem;">
-        <h3><span id="h-exp"></span> Exportar AFD por período (download)</h3>
-        <div class="row">
-          <div><label class="fld">id_Equipamento</label><input id="e_eqp" type="number" class="form-input" placeholder="1" /></div>
-          <div><label class="fld">Data início</label><input id="e_ini" type="date" class="form-input" /></div>
-          <div><label class="fld">Data fim</label><input id="e_fim" type="date" class="form-input" /></div>
-          <div><label class="fld">Serial (opcional)</label><input id="e_serial" class="form-input" placeholder="00014003750029470" /></div>
-        </div>
-        <button class="btn-primary" id="e_exp" style="margin-top:14px;">Exportar</button>
-      </div>
-    </section>
-
-    <!-- Usuários -->
-    <section data-pane="usuarios" class="hidden fade-in">
-      <div class="glass-card">
-        <h3><span id="h-user"></span> Usuários / operadores da empresa</h3>
-        <div id="u_admin_only">
+      <!-- REPs -->
+      <section data-pane="reps" class="fade-in">
+        <div class="glass-card">
+          <h3><span id="h-probe"></span> 1. Sondar REP (auto-detecta 1510/671)</h3>
           <div class="row">
-            <div><label class="fld">Login</label><input id="nu_login" class="form-input" placeholder="operador1" /></div>
-            <div><label class="fld">Senha</label><input id="nu_senha" type="password" class="form-input" value="1234" /></div>
-            <div><label class="fld">Nome</label><input id="nu_nome" class="form-input" placeholder="Maria Souza" /></div>
-            <div><label class="fld">Nível</label>
-              <select id="nu_nivel" class="form-input"><option value="operador">operador</option><option value="admin">admin</option></select>
+            <div><label class="fld">IP do REP</label><input id="p_ip" class="form-input" placeholder="192.168.100.132" /></div>
+            <div><label class="fld">Porta</label><input id="p_porta" class="form-input" value="443" /></div>
+            <div><label class="fld">Usuário</label><input id="p_user" class="form-input" value="admin" /></div>
+            <div><label class="fld">Senha</label><input id="p_pass" type="password" class="form-input" value="admin" /></div>
+          </div>
+          <button class="btn-primary" id="p_probe" style="margin-top:14px;">Sondar</button>
+          <div id="p_probe_out"></div>
+        </div>
+        <div class="glass-card" id="p_cadastro" style="display:none;margin-top:1.5rem;">
+          <h3><span id="h-cad"></span> 2. Cadastrar REP na nuvem</h3>
+          <div class="row">
+            <div><label class="fld">id_Equipamento</label><input id="c_id" type="number" class="form-input" /></div>
+            <div><label class="fld">Nome</label><input id="c_nome" class="form-input" /></div>
+            <div><label class="fld">IpAddress</label><input id="c_ip" class="form-input" /></div>
+            <div><label class="fld">Porta</label><input id="c_porta" class="form-input" /></div>
+          </div>
+          <div class="row">
+            <div><label class="fld">Passcode (senha de comunicação)</label><input id="c_pass" type="password" class="form-input" /></div>
+            <div><label class="fld">REPType (portaria)</label><select id="c_tipo" class="form-input"><option value="1510">1510</option><option value="671">671</option></select></div>
+            <div><label class="fld">Modo de conexão</label>
+              <select id="c_modo" class="form-input">
+                <option value="nuvem_puxa">nuvem_puxa (iZCloud puxa do REP)</option>
+                <option value="rep_empurra">rep_empurra (REP empurra p/ nuvem)</option>
+              </select>
             </div>
           </div>
-          <button class="btn-primary" id="nu_add" style="margin-top:14px;">Adicionar usuário</button>
+          <button class="btn-primary" id="c_save" style="margin-top:14px;">Cadastrar</button>
         </div>
-        <div id="u_readonly" style="display:none;" class="msg am">Seu usuário é operador (não admin). Apenas a conta da empresa ou um admin podem gerenciar usuários.</div>
-        <div id="nu_list" style="margin-top:12px;"></div>
-      </div>
-    </section>
-  </main>
+        <div class="glass-card" style="margin-top:1.5rem;">
+          <h3><span id="h-list"></span> REPs cadastrados</h3>
+          <button class="btn-ghost" id="r_refresh">Atualizar</button>
+          <div id="r_list" style="margin-top:10px;"></div>
+        </div>
+      </section>
+
+      <!-- Funcionários -->
+      <section data-pane="pessoas" class="hidden fade-in">
+        <div class="glass-card">
+          <h3><span id="h-vinc"></span> Vínculo REP × Funcionários</h3>
+          <p class="muted" style="margin-bottom:12px;">Selecione um REP para definir quais funcionários estão nele (subconjunto). "Todos" mostra, por funcionário, em quais REPs ele está.</p>
+          <div class="row" style="align-items:flex-end;">
+            <div style="flex:0 0 300px;">
+              <label class="fld">REP (equipamento)</label>
+              <select id="v_rep" class="form-input"><option value="0">— Todos os REPs —</option></select>
+            </div>
+            <div><button class="btn-ghost" id="v_refresh">Atualizar</button></div>
+          </div>
+          <div id="v_list" style="margin-top:14px;"></div>
+          <div id="v_savebox" style="margin-top:14px; display:none;">
+            <button class="btn-primary" id="v_save">Salvar vínculos deste REP</button>
+          </div>
+        </div>
+        <div class="glass-card" style="margin-top:1.5rem;">
+          <h3><span id="h-add"></span> Adicionar funcionário e enviar ao REP</h3>
+          <div class="row">
+            <div><label class="fld">REP (IP)</label><input id="u_ip" class="form-input" placeholder="192.168.100.132" /></div>
+            <div><label class="fld">Porta</label><input id="u_porta" class="form-input" value="443" /></div>
+            <div><label class="fld">Usuário REP</label><input id="u_user" class="form-input" value="admin" /></div>
+            <div><label class="fld">Senha REP</label><input id="u_pass" type="password" class="form-input" value="admin" /></div>
+          </div>
+          <div class="row">
+            <div><label class="fld">Portaria do REP</label><select id="u_port" class="form-input"><option value="1510">1510 (PIS)</option><option value="671">671 (CPF)</option></select></div>
+            <div><label class="fld" id="u_doclabel">PIS</label><input id="u_doc" class="form-input" placeholder="12345678901" /></div>
+            <div><label class="fld">Nome</label><input id="u_nome" class="form-input" placeholder="João Silva" /></div>
+            <div><label class="fld">Matrícula</label><input id="u_matr" class="form-input" placeholder="1" /></div>
+          </div>
+          <div class="row">
+            <div><label class="fld">Senha de acesso (REP)</label><input id="u_senha" class="form-input" value="1234" /></div>
+            <div><label class="fld">Código</label><input id="u_codigo" class="form-input" placeholder="1" /></div>
+          </div>
+          <button class="btn-primary" id="u_send" style="margin-top:14px;">Enviar pessoa</button>
+        </div>
+      </section>
+
+      <!-- AFD -->
+      <section data-pane="afd" class="hidden fade-in">
+        <div class="glass-card">
+          <h3><span id="h-sync"></span> Sincronizar AFD (nuvem ← REP)</h3>
+          <div class="row">
+            <div><label class="fld">REP (IP)</label><input id="a_ip" class="form-input" placeholder="192.168.100.132" /></div>
+            <div><label class="fld">Porta</label><input id="a_porta" class="form-input" value="443" /></div>
+            <div><label class="fld">Usuário REP</label><input id="a_user" class="form-input" value="admin" /></div>
+            <div><label class="fld">Senha REP</label><input id="a_pass" type="password" class="form-input" value="admin" /></div>
+          </div>
+          <div class="row">
+            <div><label class="fld">id_Equipamento</label><input id="a_eqp" type="number" class="form-input" placeholder="1" /></div>
+            <div><label class="fld">Modo</label><select id="a_mode" class="form-input"><option value="1510">1510</option><option value="671">671</option></select></div>
+          </div>
+          <button class="btn-primary" id="a_sync" style="margin-top:14px;">Sincronizar agora</button>
+        </div>
+        <div class="glass-card" style="margin-top:1.5rem;">
+          <h3><span id="h-exp"></span> Exportar AFD por período (download)</h3>
+          <div class="row">
+            <div><label class="fld">id_Equipamento</label><input id="e_eqp" type="number" class="form-input" placeholder="1" /></div>
+            <div><label class="fld">Data início</label><input id="e_ini" type="date" class="form-input" /></div>
+            <div><label class="fld">Data fim</label><input id="e_fim" type="date" class="form-input" /></div>
+            <div><label class="fld">Serial (opcional)</label><input id="e_serial" class="form-input" placeholder="00014003750029470" /></div>
+          </div>
+          <button class="btn-primary" id="e_exp" style="margin-top:14px;">Exportar</button>
+        </div>
+      </section>
+
+      <!-- Usuários -->
+      <section data-pane="usuarios" class="hidden fade-in">
+        <div class="glass-card">
+          <h3><span id="h-user"></span> Usuários / operadores da empresa</h3>
+          <div id="u_admin_only">
+            <div class="row">
+              <div><label class="fld">Login</label><input id="nu_login" class="form-input" placeholder="operador1" /></div>
+              <div><label class="fld">Senha</label><input id="nu_senha" type="password" class="form-input" value="1234" /></div>
+              <div><label class="fld">Nome</label><input id="nu_nome" class="form-input" placeholder="Maria Souza" /></div>
+              <div><label class="fld">Nível</label><select id="nu_nivel" class="form-input"><option value="operador">operador</option><option value="admin">admin</option></select></div>
+            </div>
+            <button class="btn-primary" id="nu_add" style="margin-top:14px;">Adicionar usuário</button>
+          </div>
+          <div id="u_readonly" style="display:none;" class="msg am">Seu usuário é operador (não admin). Apenas a conta ou um admin podem gerenciar usuários.</div>
+          <div id="nu_list" style="margin-top:12px;"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<!-- Modal de empresa -->
+<div id="empModal" class="modal-overlay hidden">
+  <div class="glass-card" style="width:100%;max-width:560px;">
+    <h3 id="empModalTitle">Cadastrar empresa</h3>
+    <div class="row">
+      <div style="flex:2;"><label class="fld">Razão Social</label><input id="em_razao" class="form-input" /></div>
+      <div style="flex:1;"><label class="fld">Nome fantasia</label><input id="em_nome" class="form-input" /></div>
+    </div>
+    <div class="row">
+      <div style="flex:1;"><label class="fld">CNPJ</label><input id="em_cnpj" class="form-input" /></div>
+      <div style="flex:2;"><label class="fld">Endereço</label><input id="em_end" class="form-input" /></div>
+    </div>
+    <div class="row">
+      <div style="flex:2;"><label class="fld">Responsável (nome)</label><input id="em_resp_nome" class="form-input" /></div>
+      <div style="flex:1;"><label class="fld">CPF do responsável</label><input id="em_resp_cpf" class="form-input" /></div>
+    </div>
+    <div id="em_api_block" class="row">
+      <div style="flex:1;"><label class="fld">Login da empresa (API)</label><input id="em_login" class="form-input" placeholder="empresa1" /></div>
+      <div style="flex:1;"><label class="fld">Senha da empresa (API)</label><input id="em_senha" type="password" class="form-input" placeholder="••••" /></div>
+    </div>
+    <div id="em_msg" style="margin-top:10px;"></div>
+    <div style="display:flex;gap:.75rem;justify-content:flex-end;margin-top:1rem;">
+      <button class="btn-ghost" id="em_cancel" type="button">Cancelar</button>
+      <button class="btn-primary" id="em_save" type="button">Salvar</button>
+    </div>
+  </div>
 </div>
 
 <div id="toast-box"></div>
@@ -377,11 +434,14 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
 const $ = (id) => document.getElementById(id);
 const API = '';
 let TOKEN = localStorage.getItem('iz_token') || '';
-let SCHEMA = localStorage.getItem('iz_schema') || '';
-let TIPO = localStorage.getItem('iz_tipo') || '';
-let NIVEL = localStorage.getItem('iz_nivel') || '';
+let NOME = localStorage.getItem('iz_nome') || '';
+let EMPRESAS = [];
+let EMP_SCHEMA = localStorage.getItem('iz_emp_schema') || '';   // schema ativo
+let EMP_ID = localStorage.getItem('iz_emp_id') || '';
 
-// ---------- ícones (estilo lucide, inline SVG) ----------
+function temEmpresa() { return !!EMP_SCHEMA; }
+
+// ---------- ícones (estilo lucide) ----------
 const ICONS = {
   cloud: '<path d="M17.5 19a4.5 4.5 0 0 0 0-9h-1.8A7 7 0 1 0 4 16.5"/><path d="M12 12v9"/><path d="m16 16-4-4-4 4"/>',
   server: '<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y1="6"/><line x1="6" y1="18" x2="6.01" y1="18"/>',
@@ -396,6 +456,7 @@ const ICONS = {
   send: '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
   refresh: '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+  building: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M8 10h.01M16 10h.01M8 14h.01M16 14h.01"/>',
 };
 function ic(name, size = 18) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ''}</svg>`;
@@ -422,7 +483,11 @@ function mountIcons() {
 }
 
 // ---------- helpers ----------
-function authHeaders(extra = {}) { return { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + TOKEN, ...extra }; }
+function authHeaders(extra = {}) {
+  const h = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + TOKEN, ...extra };
+  if (temEmpresa()) h['X-Empresa'] = EMP_SCHEMA;
+  return h;
+}
 async function api(path, opts = {}) {
   const res = await fetch(API + path, { ...opts, headers: authHeaders(opts.headers || {}) });
   let data = null;
@@ -454,7 +519,7 @@ function toast(message, type = 'info', duration = 4000) {
 function confirmModal({ title = 'Confirmação', message = '', confirmLabel = 'OK', cancelLabel = 'Cancelar', variant = 'primary' } = {}) {
   return new Promise((resolve) => {
     const ov = document.createElement('div');
-    ov.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.6);backdrop-filter:blur(4px)';
+    ov.className = 'modal-overlay';
     const card = document.createElement('div');
     card.className = 'glass-card';
     card.style.cssText = 'max-width:480px;width:90%;padding:2rem;';
@@ -483,40 +548,140 @@ function applyAuth() {
   $('login').classList.toggle('hidden', logged);
   $('app').classList.toggle('hidden', !logged);
   if (logged) {
-    const tag = TIPO === 'empresa' ? 'empresa' : ('operador' + (NIVEL ? '/' + NIVEL : ''));
-    $('who').textContent = (SCHEMA || '') + ' · ' + tag;
     showPane('reps');
-    loadReps();
-    carregarVinculo();
-    if (TIPO === 'empresa' || NIVEL === 'admin') loadUsuarios();
+    renderEmpresaBar();
+    if (temEmpresa()) { loadReps(); carregarVinculo(); if (podeGerenciar()) loadUsuarios(); }
   }
 }
 function logout() {
-  TOKEN = ''; SCHEMA = ''; TIPO = ''; NIVEL = '';
-  localStorage.removeItem('iz_token'); localStorage.removeItem('iz_schema');
-  localStorage.removeItem('iz_tipo'); localStorage.removeItem('iz_nivel');
+  TOKEN = ''; NOME = ''; EMPRESAS = []; EMP_SCHEMA = ''; EMP_ID = '';
+  ['iz_token','iz_nome','iz_emp_schema','iz_emp_id'].forEach(k => localStorage.removeItem(k));
   applyAuth();
 }
 $('logout').onclick = logout;
 
+// toggle entrar / criar conta
+$('toggle_signup').onclick = () => {
+  const sig = $('s_form').style.display !== 'none';
+  $('s_form').style.display = sig ? 'none' : 'flex';
+  $('l_form').style.display = sig ? 'flex' : 'none';
+  $('l_title').textContent = sig ? 'Bem-vindo de volta' : 'Criar conta';
+  $('l_subtitle').textContent = sig ? 'Acesse o painel da sua conta.' : 'Cadastre sua conta e empresa.';
+  $('toggle_signup').textContent = sig ? 'Não tem conta? Cadastre-se' : 'Já tem conta? Entrar';
+};
+
 $('l_form').onsubmit = async (e) => {
   e.preventDefault();
   try {
-    const r = await fetch(API + '/api/auth/login', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ login: $('l_login').value, senha: $('l_senha').value }),
-    });
+    const r = await fetch(API + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login: $('l_login').value, senha: $('l_senha').value }) });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
-    TOKEN = data.token; SCHEMA = data.schema; TIPO = data.tipo || ''; NIVEL = data.nivel || '';
-    localStorage.setItem('iz_token', TOKEN); localStorage.setItem('iz_schema', SCHEMA);
-    localStorage.setItem('iz_tipo', TIPO); localStorage.setItem('iz_nivel', NIVEL);
-    setMsg($('l_msg'), true, 'Login OK · schema ' + data.schema);
-    applyAuth();
+    entrar(data);
   } catch (e) { setMsg($('l_msg'), false, e.message); }
 };
 
-// ---------- navegação (sidebar) ----------
+$('s_form').onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    const r = await fetch(API + '/api/auth/registro', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login: $('s_login').value, senha: $('s_senha').value, nome: $('s_nome').value }) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+    entrar(data);
+    toast('Conta criada. Cadastre sua primeira empresa.', 'success');
+  } catch (e) { setMsg($('l_msg'), false, e.message); }
+};
+
+function entrar(data) {
+  TOKEN = data.token; NOME = data.nome || '';
+  EMPRESAS = data.contas || [];
+  localStorage.setItem('iz_token', TOKEN); localStorage.setItem('iz_nome', NOME);
+  // auto-seleciona a primeira empresa, se houver
+  if (EMPRESAS.length) selecionarEmpresa(EMPRESAS[0].schema, EMPRESAS[0].id_cliente);
+  else { EMP_SCHEMA = ''; EMP_ID = ''; }
+  applyAuth();
+}
+
+// ---------- empresas (topo) ----------
+function selecionarEmpresa(schema, id) {
+  EMP_SCHEMA = schema; EMP_ID = String(id);
+  localStorage.setItem('iz_emp_schema', schema); localStorage.setItem('iz_emp_id', EMP_ID);
+}
+function renderEmpresaBar() {
+  const sel = $('empSelect');
+  sel.innerHTML = '<option value="">— selecionar —</option>' + EMPRESAS.map(e => `<option value="${e.schema}">${e.razao_social || e.nome_empresa || e.schema}</option>`).join('');
+  sel.value = EMP_SCHEMA;
+  sel.onchange = () => {
+    const e = EMPRESAS.find(x => x.schema === sel.value);
+    if (e) { selecionarEmpresa(e.schema, e.id_cliente); renderEmpresaBar(); loadReps(); carregarVinculo(); if (podeGerenciar()) loadUsuarios(); }
+  };
+  renderEmpCard();
+}
+function renderEmpCard() {
+  const card = $('empCard');
+  const e = EMPRESAS.find(x => x.schema === EMP_SCHEMA);
+  if (!e) {
+    card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
+      <div><div class="ec-nome">Nenhuma empresa selecionada</div><div class="muted" style="margin-top:.4rem;">Cadastre a primeira empresa para começar.</div></div>
+      <button class="btn-primary" id="emp_first">Cadastrar empresa</button></div>`;
+    $('emp_first').onclick = () => abrirEmpModal(null);
+    $('top_perfil').textContent = '—'; $('top_perfil').className = 'emp-pill muted';
+    return;
+  }
+  $('top_perfil').textContent = (e.razao_social || e.nome_empresa || e.schema); $('top_perfil').className = 'emp-pill';
+  card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;">
+      <div>
+        <div class="ec-nome">${e.razao_social || e.nome_empresa || '—'}</div>
+        <div class="muted" style="margin-top:.3rem;">${e.nome_empresa && e.razao_social ? e.nome_empresa : ''}</div>
+      </div>
+      <button class="btn-ghost" id="emp_edit">Editar</button>
+    </div>
+    <div class="ec-grid">
+      <div class="ec-item"><div class="k">CNPJ</div><div class="v">${e.cnpj || '—'}</div></div>
+      <div class="ec-item"><div class="k">Endereço</div><div class="v">${e.endereco || '—'}</div></div>
+      <div class="ec-item"><div class="k">Responsável</div><div class="v">${e.responsavel_nome || '—'}</div></div>
+      <div class="ec-item"><div class="k">CPF do responsável</div><div class="v">${e.responsavel_cpf || '—'}</div></div>
+    </div>`;
+  $('emp_edit').onclick = () => abrirEmpModal(e);
+}
+
+function abrirEmpModal(e) {
+  const editando = !!e;
+  $('empModalTitle').textContent = editando ? 'Editar empresa' : 'Cadastrar empresa';
+  $('em_razao').value = editando ? (e.razao_social || '') : '';
+  $('em_nome').value = editando ? (e.nome_empresa || '') : '';
+  $('em_cnpj').value = editando ? (e.cnpj || '') : '';
+  $('em_end').value = editando ? (e.endereco || '') : '';
+  $('em_resp_nome').value = editando ? (e.responsavel_nome || '') : '';
+  $('em_resp_cpf').value = editando ? (e.responsavel_cpf || '') : '';
+  $('em_api_block').style.display = editando ? 'none' : 'flex';
+  $('em_login').value = ''; $('em_senha').value = '';
+  $('em_msg').innerHTML = '';
+  $('empModal').dataset.id = editando ? e.id_cliente : '';
+  $('empModal').classList.remove('hidden');
+}
+$('emp_cancel').onclick = () => $('empModal').classList.add('hidden');
+$('emp_new').onclick = () => abrirEmpModal(null);
+
+$('em_save').onclick = async () => {
+  try {
+    const id = $('empModal').dataset.id;
+    const payload = {
+      razao_social: $('em_razao').value, nome_empresa: $('em_nome').value, cnpj: $('em_cnpj').value,
+      endereco: $('em_end').value, responsavel_nome: $('em_resp_nome').value, responsavel_cpf: $('em_resp_cpf').value,
+    };
+    if (!id) { payload.login = $('em_login').value; payload.senha = $('em_senha').value; }
+    if (!payload.razao_social) { setMsg($('em_msg'), false, 'Razão Social é obrigatória.'); return; }
+    if (!id && !payload.login) { setMsg($('em_msg'), false, 'Login da empresa (API) é obrigatório.'); return; }
+    if (id) await api('/api/empresas/' + id, { method: 'PUT', body: JSON.stringify(payload) });
+    else { const r = await api('/api/empresas', { method: 'POST', body: JSON.stringify(payload) }); if (r.schema) { EMPRESAS.push(r); } }
+    EMPRESAS = await api('/api/empresas');
+    $('empModal').classList.add('hidden');
+    toast(id ? 'Empresa atualizada.' : 'Empresa cadastrada.', 'success');
+    renderEmpresaBar();
+  } catch (e) { setMsg($('em_msg'), false, e.message); }
+};
+
+// ---------- navegação ----------
 const TITLES = {
   reps: ['REPs', 'Sondar, cadastrar e listar os equipamentos da empresa.'],
   pessoas: ['Funcionários', 'Vincular colaboradores aos REPs e enviar à memória do REP.'],
@@ -531,48 +696,30 @@ function showPane(name) {
 }
 document.querySelectorAll('.nav-item[data-pane]').forEach(b => b.onclick = () => showPane(b.dataset.pane));
 
-// ---------- REPs: probe + cadastro ----------
+// ---------- REPs ----------
 $('p_probe').onclick = async () => {
   const out = $('p_probe_out'); out.innerHTML = '';
+  if (!temEmpresa()) { setMsg(out, false, 'Selecione uma empresa primeiro.'); return; }
   try {
-    const r = await api('/api/reps/probe', {
-      method: 'POST',
-      body: JSON.stringify({ ip: $('p_ip').value, porta: Number($('p_porta').value), usuario: $('p_user').value, senha: $('p_pass').value }),
-    });
+    const r = await api('/api/reps/probe', { method: 'POST', body: JSON.stringify({ ip: $('p_ip').value, porta: Number($('p_porta').value), usuario: $('p_user').value, senha: $('p_pass').value }) });
     const det = r.portaria ? `<span class="pill c">${r.portaria}</span>` : '<span class="pill am">portaria não detectada</span>';
-    out.innerHTML = `<div class="msg ok">Conectado ✔ ${det}
-      <div class="kv" style="margin-top:6px;">
-        <b>Modelo:</b> ${r.modelo || '-'} &nbsp; <b>Serial:</b> ${r.serial || '-'}<br/>
-        <b>Firmware:</b> ${r.firmware || '-'} (${r.firmwareHex || '-'}) &nbsp; <b>Facial:</b> ${r.isFacial ? 'sim' : 'não'}<br/>
-        <b>Usuários:</b> ${r.usuarios ?? '-'} &nbsp; <b>Templates:</b> ${r.templates ?? '-'}
-      </div></div>`;
+    out.innerHTML = `<div class="msg ok">Conectado ✔ ${det}<div class="kv" style="margin-top:6px;"><b>Modelo:</b> ${r.modelo || '-'} &nbsp; <b>Serial:</b> ${r.serial || '-'}<br/><b>Firmware:</b> ${r.firmware || '-'} (${r.firmwareHex || '-'}) &nbsp; <b>Facial:</b> ${r.isFacial ? 'sim' : 'não'}<br/><b>Usuários:</b> ${r.usuarios ?? '-'} &nbsp; <b>Templates:</b> ${r.templates ?? '-'}</div></div>`;
     const maxId = (await api('/api/reps')).reduce((m, x) => Math.max(m, x.id_Equipamento || 0), 0);
-    $('c_id').value = maxId + 1;
-    $('c_nome').value = (r.modelo || 'REP') + (r.serial ? ' ' + r.serial : '');
-    $('c_ip').value = $('p_ip').value;
-    $('c_porta').value = $('p_porta').value;
-    $('c_pass').value = $('p_pass').value;
+    $('c_id').value = maxId + 1; $('c_nome').value = (r.modelo || 'REP') + (r.serial ? ' ' + r.serial : '');
+    $('c_ip').value = $('p_ip').value; $('c_porta').value = $('p_porta').value; $('c_pass').value = $('p_pass').value;
     if (r.portaria) $('c_tipo').value = r.portaria;
     $('p_cadastro').style.display = 'block';
   } catch (e) { setMsg(out, false, e.message); }
 };
-
 $('c_save').onclick = async () => {
   try {
-    await api('/api/reps', {
-      method: 'POST',
-      body: JSON.stringify({
-        id_Equipamento: Number($('c_id').value), Nome: $('c_nome').value, IpAddress: $('c_ip').value,
-        Porta: Number($('c_porta').value), Passcode: $('c_pass').value, REPType: $('c_tipo').value, ModoConexao: $('c_modo').value,
-      }),
-    });
-    toast('REP cadastrado.', 'success');
-    loadReps();
+    await api('/api/reps', { method: 'POST', body: JSON.stringify({ id_Equipamento: Number($('c_id').value), Nome: $('c_nome').value, IpAddress: $('c_ip').value, Porta: Number($('c_porta').value), Passcode: $('c_pass').value, REPType: $('c_tipo').value, ModoConexao: $('c_modo').value }) });
+    toast('REP cadastrado.', 'success'); loadReps();
   } catch (e) { toast(e.message, 'error'); }
 };
-
 async function loadReps() {
   const box = $('r_list'); box.innerHTML = 'carregando…';
+  if (!temEmpresa()) { box.innerHTML = '<p class="muted">Selecione uma empresa.</p>'; return; }
   try {
     const rows = await api('/api/reps');
     if (!rows.length) { box.innerHTML = '<p class="muted">Nenhum REP cadastrado.</p>'; return; }
@@ -580,50 +727,29 @@ async function loadReps() {
       rows.map(r => {
         const modo = r.ModoConexao || 'nuvem_puxa';
         const modoPill = modo === 'rep_empurra' ? '<span class="pill am">rep_empurra</span>' : '<span class="pill c">nuvem_puxa</span>';
-        return `<tr>
-          <td>${r.id_Equipamento}</td><td>${r.Nome || '-'}</td>
-          <td>${r.IpAddress || '-'}:${r.Porta ?? '-'}</td>
-          <td>${r.REPType ? `<span class="pill c">${r.REPType}</span>` : '-'}</td>
-          <td>${modoPill}</td>
-          <td>${r.qtdePessoas ?? '-'}</td><td>${r.qtdeDigitais ?? '-'}</td>
-        </tr>`;
+        return `<tr><td>${r.id_Equipamento}</td><td>${r.Nome || '-'}</td><td>${r.IpAddress || '-'}:${r.Porta ?? '-'}</td><td>${r.REPType ? `<span class="pill c">${r.REPType}</span>` : '-'}</td><td>${modoPill}</td><td>${r.qtdePessoas ?? '-'}</td><td>${r.qtdeDigitais ?? '-'}</td></tr>`;
       }).join('') + '</tbody></table></div>';
   } catch (e) { box.innerHTML = '<div class="msg err">' + e.message + '</div>'; }
 }
 $('r_refresh').onclick = loadReps;
 
-// ---------- Funcionários: vínculo REP x pessoa ----------
-let V_REP = 0;
-let V_PESSOAS = [];
-let V_VINC = [];
-let V_REPS = [];
-let V_PENDING = null;
-
+// ---------- Funcionários: vínculo ----------
+let V_REP = 0, V_PESSOAS = [], V_VINC = [], V_REPS = [], V_PENDING = null;
 async function carregarVinculo() {
+  if (!temEmpresa()) { $('v_list').innerHTML = '<p class="muted">Selecione uma empresa.</p>'; return; }
   try {
     const [p, v, r] = await Promise.all([ api('/api/pessoas'), api('/api/pessoas/vinculos'), api('/api/reps') ]);
     V_PESSOAS = p; V_VINC = v; V_REPS = r;
-    const sel = $('v_rep');
-    const keep = sel.value;
-    sel.innerHTML = '<option value="0">— Todos os REPs —</option>' +
-      r.map(x => `<option value="${x.id_Equipamento}">${x.id_Equipamento} · ${x.Nome || '-'}</option>`).join('');
-    sel.value = keep;
-    renderVinculo();
+    const sel = $('v_rep'); const keep = sel.value;
+    sel.innerHTML = '<option value="0">— Todos os REPs —</option>' + r.map(x => `<option value="${x.id_Equipamento}">${x.id_Equipamento} · ${x.Nome || '-'}</option>`).join('');
+    sel.value = keep; renderVinculo();
   } catch (e) { $('v_list').innerHTML = '<div class="msg err">' + e.message + '</div>'; }
 }
-
 function repNome(id) { const r = V_REPS.find(x => x.id_Equipamento === id); return r ? (r.Nome || ('REP ' + id)) : ('REP ' + id); }
-
 function renderVinculo() {
   const box = $('v_list');
-  if (!V_PESSOAS.length) {
-    box.innerHTML = '<p class="muted">Nenhum funcionário cadastrado. Use o card abaixo para adicionar.</p>';
-    $('v_savebox').style.display = 'none';
-    return;
-  }
-  const porPessoa = {};
-  V_VINC.forEach(v => { (porPessoa[v.id_Pessoa] = porPessoa[v.id_Pessoa] || []).push(v.id_Equipamento); });
-
+  if (!V_PESSOAS.length) { box.innerHTML = '<p class="muted">Nenhum funcionário cadastrado. Use o card abaixo para adicionar.</p>'; $('v_savebox').style.display = 'none'; return; }
+  const porPessoa = {}; V_VINC.forEach(v => { (porPessoa[v.id_Pessoa] = porPessoa[v.id_Pessoa] || []).push(v.id_Equipamento); });
   if (V_REP === 0) {
     $('v_savebox').style.display = 'none';
     box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr><th>ID</th><th>Nome</th><th>Doc</th><th>REPs vinculados</th></tr></thead><tbody>' +
@@ -635,119 +761,68 @@ function renderVinculo() {
       }).join('') + '</tbody></table></div>';
   } else {
     if (V_PENDING === null) V_PENDING = new Set(porPessoa[V_REP] || []);
-    const cur = V_PENDING;
-    $('v_savebox').style.display = 'block';
+    const cur = V_PENDING; $('v_savebox').style.display = 'block';
     box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr><th></th><th>ID</th><th>Nome</th><th>Doc</th><th>Também em</th></tr></thead><tbody>' +
       V_PESSOAS.map(p => {
         const checked = cur.has(p.id_pessoa) ? 'checked' : '';
         const outros = (porPessoa[p.id_pessoa] || []).filter(id => id !== V_REP);
         const pills = outros.length ? outros.map(id => `<span class="pill c">${repNome(id)}</span>`).join(' ') : '<span class="muted">—</span>';
         const doc = p.CPF || p.PIS || '-';
-        return `<tr>
-          <td><input type="checkbox" class="vchk" data-id="${p.id_pessoa}" ${checked}></td>
-          <td>${p.id_pessoa}</td><td>${p.Nome || '-'}</td><td>${doc}</td><td>${pills}</td>
-        </tr>`;
+        return `<tr><td><input type="checkbox" class="vchk" data-id="${p.id_pessoa}" ${checked}></td><td>${p.id_pessoa}</td><td>${p.Nome || '-'}</td><td>${doc}</td><td>${pills}</td></tr>`;
       }).join('') + '</tbody></table></div>';
-    box.querySelectorAll('.vchk').forEach(c => {
-      c.onchange = () => {
-        const id = Number(c.dataset.id);
-        if (c.checked) V_PENDING.add(id); else V_PENDING.delete(id);
-      };
-    });
+    box.querySelectorAll('.vchk').forEach(c => { c.onchange = () => { const id = Number(c.dataset.id); if (c.checked) V_PENDING.add(id); else V_PENDING.delete(id); }; });
   }
 }
-
 $('v_rep').onchange = () => { V_REP = Number($('v_rep').value); V_PENDING = null; renderVinculo(); };
 $('v_refresh').onclick = carregarVinculo;
 $('v_save').onclick = async () => {
-  try {
-    await api('/api/reps/' + V_REP + '/funcionarios', { method: 'PUT', body: JSON.stringify({ ids: [...V_PENDING] }) });
-    V_PENDING = null;
-    toast('Vínculos salvos no REP ' + V_REP + '.', 'success');
-    await carregarVinculo();
-  } catch (e) { toast(e.message, 'error'); }
+  try { await api('/api/reps/' + V_REP + '/funcionarios', { method: 'PUT', body: JSON.stringify({ ids: [...V_PENDING] }) }); V_PENDING = null; toast('Vínculos salvos no REP ' + V_REP + '.', 'success'); await carregarVinculo(); }
+  catch (e) { toast(e.message, 'error'); }
 };
-
-// ---------- Enviar pessoa ao REP (mantido) ----------
 $('u_port').onchange = () => { $('u_doclabel').textContent = $('u_port').value === '671' ? 'CPF' : 'PIS'; };
 $('u_send').onclick = async () => {
-  const port = $('u_port').value;
-  const doc = $('u_doc').value.replace(/\D/g, '');
+  const port = $('u_port').value; const doc = $('u_doc').value.replace(/\D/g, '');
   const pessoa = { nome: $('u_nome').value, codigo: Number($('u_codigo').value || 0), senha: $('u_senha').value, matricula: Number($('u_matr').value || 0) };
   if (port === '671') pessoa.cpf = doc; else pessoa.pis = doc;
   try {
-    const r = await api('/api/pessoas', {
-      method: 'POST',
-      body: JSON.stringify({ rep: { ip: $('u_ip').value, porta: Number($('u_porta').value), portaria: port, usuario: $('u_user').value, senha: $('u_pass').value }, pessoa }),
-    });
+    const r = await api('/api/pessoas', { method: 'POST', body: JSON.stringify({ rep: { ip: $('u_ip').value, porta: Number($('u_porta').value), portaria: port, usuario: $('u_user').value, senha: $('u_pass').value }, pessoa }) });
     toast('Enviado ao REP ✔ idNuvem=' + (r.idNuvem ?? '-'), 'success');
   } catch (e) { toast(e.message, 'error'); }
 };
 
-// ---------- AFD sync + export ----------
+// ---------- AFD ----------
 $('a_sync').onclick = async () => {
-  try {
-    const r = await api('/api/afd/sync', {
-      method: 'POST',
-      body: JSON.stringify({ rep: { ip: $('a_ip').value, porta: Number($('a_porta').value), usuario: $('a_user').value, senha: $('a_pass').value }, idEquipamento: Number($('a_eqp').value), mode: $('a_mode').value }),
-    });
-    toast('Sincronizado ✔ ' + JSON.stringify(r), 'success');
-  } catch (e) { toast(e.message, 'error'); }
+  try { const r = await api('/api/afd/sync', { method: 'POST', body: JSON.stringify({ rep: { ip: $('a_ip').value, porta: Number($('a_porta').value), usuario: $('a_user').value, senha: $('a_pass').value }, idEquipamento: Number($('a_eqp').value), mode: $('a_mode').value }) }); toast('Sincronizado ✔ ' + JSON.stringify(r), 'success'); }
+  catch (e) { toast(e.message, 'error'); }
 };
-
 $('e_exp').onclick = async () => {
   try {
-    const res = await fetch(API + '/api/afd/export', {
-      method: 'POST', headers: authHeaders(),
-      body: JSON.stringify({ idEquipamento: Number($('e_eqp').value || 0), dataInicio: $('e_ini').value || undefined, dataFim: $('e_fim').value || undefined, serial: $('e_serial').value || undefined }),
-    });
+    const res = await fetch(API + '/api/afd/export', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ idEquipamento: Number($('e_eqp').value || 0), dataInicio: $('e_ini').value || undefined, dataFim: $('e_fim').value || undefined, serial: $('e_serial').value || undefined }) });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || ('HTTP ' + res.status)); }
     const blob = await res.blob();
     const fn = (res.headers.get('content-disposition') || '').match(/filename="([^"]+)"/);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = fn ? fn[1] : 'AFD.txt'; a.click(); URL.revokeObjectURL(url);
+    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = fn ? fn[1] : 'AFD.txt'; a.click(); URL.revokeObjectURL(url);
     toast('Download iniciado.', 'success');
   } catch (e) { toast(e.message, 'error'); }
 };
 
-// ---------- Usuarios ----------
-function podeGerenciar() { return TIPO === 'empresa' || NIVEL === 'admin'; }
+// ---------- Usuários ----------
+function podeGerenciar() { return true; }
 async function loadUsuarios() {
   const box = $('nu_list'); box.innerHTML = 'carregando…';
-  $('u_admin_only').style.display = podeGerenciar() ? 'block' : 'none';
-  $('u_readonly').style.display = podeGerenciar() ? 'none' : 'block';
-  if (!podeGerenciar()) { box.innerHTML = ''; return; }
+  $('u_admin_only').style.display = 'block'; $('u_readonly').style.display = 'none';
+  if (!temEmpresa()) { box.innerHTML = ''; return; }
   try {
     const rows = await api('/api/auth/usuarios');
     if (!rows.length) { box.innerHTML = '<p class="muted">Nenhum operador cadastrado.</p>'; return; }
     box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr><th>ID</th><th>Login</th><th>Nome</th><th>Nível</th><th></th></tr></thead><tbody>' +
-      rows.map(r => `<tr>
-        <td>${r.id_usuario}</td><td>${r.login}</td><td>${r.nome || '-'}</td>
-        <td>${r.nivel === 'admin' ? '<span class="pill g">admin</span>' : '<span class="pill c">operador</span>'}</td>
-        <td><button class="btn-danger" data-del="${r.id_usuario}">Remover</button></td>
-      </tr>`).join('') + '</tbody></table></div>';
-    box.querySelectorAll('button[data-del]').forEach(b => {
-      b.onclick = async () => {
-        const ok = await confirmModal({ title: 'Remover usuário', message: 'Remover o usuário ' + b.dataset.del + '?', confirmLabel: 'Remover', variant: 'danger' });
-        if (!ok) return;
-        try { await api('/api/auth/usuarios/' + b.dataset.del, { method: 'DELETE' }); toast('Usuário removido.', 'success'); loadUsuarios(); }
-        catch (e) { toast(e.message, 'error'); }
-      };
-    });
+      rows.map(r => `<tr><td>${r.id_usuario}</td><td>${r.login}</td><td>${r.nome || '-'}</td><td>${r.nivel === 'admin' ? '<span class="pill g">admin</span>' : '<span class="pill c">operador</span>'}</td><td><button class="btn-danger" data-del="${r.id_usuario}">Remover</button></td></tr>`).join('') + '</tbody></table></div>';
+    box.querySelectorAll('button[data-del]').forEach(b => { b.onclick = async () => { const ok = await confirmModal({ title: 'Remover usuário', message: 'Remover o usuário ' + b.dataset.del + '?', confirmLabel: 'Remover', variant: 'danger' }); if (!ok) return; try { await api('/api/auth/usuarios/' + b.dataset.del, { method: 'DELETE' }); toast('Usuário removido.', 'success'); loadUsuarios(); } catch (e) { toast(e.message, 'error'); } }; });
   } catch (e) { box.innerHTML = '<div class="msg err">' + e.message + '</div>'; }
 }
-
 $('nu_add').onclick = async () => {
-  try {
-    await api('/api/auth/usuarios', {
-      method: 'POST',
-      body: JSON.stringify({ login: $('nu_login').value, senha: $('nu_senha').value, nome: $('nu_nome').value, nivel: $('nu_nivel').value }),
-    });
-    toast('Usuário adicionado.', 'success');
-    $('nu_login').value = ''; $('nu_nome').value = '';
-    loadUsuarios();
-  } catch (e) { toast(e.message, 'error'); }
+  try { await api('/api/auth/usuarios', { method: 'POST', body: JSON.stringify({ login: $('nu_login').value, senha: $('nu_senha').value, nome: $('nu_nome').value, nivel: $('nu_nivel').value }) }); toast('Usuário adicionado.', 'success'); $('nu_login').value = ''; $('nu_nome').value = ''; loadUsuarios(); }
+  catch (e) { toast(e.message, 'error'); }
 };
 
 mountIcons();
