@@ -398,7 +398,17 @@ Passos (resumo):
     ADD COLUMN ModoConexao ENUM('nuvem_puxa','rep_empurra') DEFAULT 'nuvem_puxa';
   ```
 
----
+### 12.8 Vínculo REP × Funcionários (Fase 1)
+- A tabela `equip_pessoa` (muitos-para-muitos, já existente) agora é usada para
+  definir o **subconjunto** de funcionários de cada REP (ex.: REP A = administrativos,
+  REP B = demais, mesma empresa). A empresa é a fonte da verdade; o REP recebe o subset.
+- Backend: `GET /api/pessoas` (lista), `GET /api/pessoas/vinculos` (todos os pares),
+  `GET/PUT /api/reps/:id/funcionarios` (ler/definir o subset de um REP).
+  `idcloud.js`: `listarPessoas`, `listarTodosVinculos`, `listarVinculos`, `definirVinculos`.
+- UI (aba **Funcionários**): selecione um REP e marque quais funcionários nele estão
+  (Salvar); modo "Todos" mostra, por funcionário, em quais REPs ele está.
+- **Fase 2 (pendente):** push filtrado por vínculo + biometria (digitas/faces) e
+  leitura (import) do REP — exige estender `repClient` (get_users/load_users/templates).
 
 ## 13. Deploy no Railway (definido)
 

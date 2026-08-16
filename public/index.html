@@ -214,7 +214,7 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
     </div>
     <nav class="nav-menu">
       <button class="nav-item active" data-pane="reps"><span id="ni-reps"></span> REPs</button>
-      <button class="nav-item" data-pane="pessoas"><span id="ni-pessoas"></span> Pessoas</button>
+      <button class="nav-item" data-pane="pessoas"><span id="ni-pessoas"></span> Funcionários</button>
       <button class="nav-item" data-pane="afd"><span id="ni-afd"></span> AFD</button>
       <button class="nav-item" data-pane="usuarios"><span id="ni-usuarios"></span> Usuários</button>
     </nav>
@@ -276,10 +276,26 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
       </div>
     </section>
 
-    <!-- Pessoas -->
+    <!-- Funcionários -->
     <section data-pane="pessoas" class="hidden fade-in">
       <div class="glass-card">
-        <h3><span id="h-pessoa"></span> Enviar pessoa para a memória do REP</h3>
+        <h3><span id="h-vinc"></span> Vínculo REP × Funcionários</h3>
+        <p class="muted" style="margin-bottom:12px;">Selecione um REP para definir quais funcionários estão nele (subconjunto). "Todos" mostra, por funcionário, em quais REPs ele está.</p>
+        <div class="row" style="align-items:flex-end;">
+          <div style="flex:0 0 300px;">
+            <label class="fld">REP (equipamento)</label>
+            <select id="v_rep" class="form-input"><option value="0">— Todos os REPs —</option></select>
+          </div>
+          <div><button class="btn-ghost" id="v_refresh">Atualizar</button></div>
+        </div>
+        <div id="v_list" style="margin-top:14px;"></div>
+        <div id="v_savebox" style="margin-top:14px; display:none;">
+          <button class="btn-primary" id="v_save">Salvar vínculos deste REP</button>
+        </div>
+      </div>
+
+      <div class="glass-card" style="margin-top:1.5rem;">
+        <h3><span id="h-add"></span> Adicionar funcionário e enviar ao REP</h3>
         <div class="row">
           <div><label class="fld">REP (IP)</label><input id="u_ip" class="form-input" placeholder="192.168.100.132" /></div>
           <div><label class="fld">Porta</label><input id="u_porta" class="form-input" value="443" /></div>
@@ -398,6 +414,8 @@ function mountIcons() {
   $('h-cad').innerHTML = ic('save', 16);
   $('h-list').innerHTML = ic('list', 16);
   $('h-pessoa').innerHTML = ic('send', 16);
+  $('h-vinc').innerHTML = ic('users', 16);
+  $('h-add').innerHTML = ic('user', 16);
   $('h-sync').innerHTML = ic('refresh', 16);
   $('h-exp').innerHTML = ic('download', 16);
   $('h-user').innerHTML = ic('user', 16);
@@ -469,6 +487,7 @@ function applyAuth() {
     $('who').textContent = (SCHEMA || '') + ' · ' + tag;
     showPane('reps');
     loadReps();
+    carregarVinculo();
     if (TIPO === 'empresa' || NIVEL === 'admin') loadUsuarios();
   }
 }
@@ -500,7 +519,7 @@ $('l_form').onsubmit = async (e) => {
 // ---------- navegação (sidebar) ----------
 const TITLES = {
   reps: ['REPs', 'Sondar, cadastrar e listar os equipamentos da empresa.'],
-  pessoas: ['Pessoas', 'Enviar colaboradores para a memória do REP.'],
+  pessoas: ['Funcionários', 'Vincular colaboradores aos REPs e enviar à memória do REP.'],
   afd: ['AFD', 'Sincronizar e exportar as marcações.'],
   usuarios: ['Usuários', 'Gerenciar os acessos da empresa.'],
 };
@@ -573,7 +592,83 @@ async function loadReps() {
 }
 $('r_refresh').onclick = loadReps;
 
-// ---------- Pessoas ----------
+// ---------- Funcionários: vínculo REP x pessoa ----------
+let V_REP = 0;
+let V_PESSOAS = [];
+let V_VINC = [];
+let V_REPS = [];
+let V_PENDING = null;
+
+async function carregarVinculo() {
+  try {
+    const [p, v, r] = await Promise.all([ api('/api/pessoas'), api('/api/pessoas/vinculos'), api('/api/reps') ]);
+    V_PESSOAS = p; V_VINC = v; V_REPS = r;
+    const sel = $('v_rep');
+    const keep = sel.value;
+    sel.innerHTML = '<option value="0">— Todos os REPs —</option>' +
+      r.map(x => `<option value="${x.id_Equipamento}">${x.id_Equipamento} · ${x.Nome || '-'}</option>`).join('');
+    sel.value = keep;
+    renderVinculo();
+  } catch (e) { $('v_list').innerHTML = '<div class="msg err">' + e.message + '</div>'; }
+}
+
+function repNome(id) { const r = V_REPS.find(x => x.id_Equipamento === id); return r ? (r.Nome || ('REP ' + id)) : ('REP ' + id); }
+
+function renderVinculo() {
+  const box = $('v_list');
+  if (!V_PESSOAS.length) {
+    box.innerHTML = '<p class="muted">Nenhum funcionário cadastrado. Use o card abaixo para adicionar.</p>';
+    $('v_savebox').style.display = 'none';
+    return;
+  }
+  const porPessoa = {};
+  V_VINC.forEach(v => { (porPessoa[v.id_Pessoa] = porPessoa[v.id_Pessoa] || []).push(v.id_Equipamento); });
+
+  if (V_REP === 0) {
+    $('v_savebox').style.display = 'none';
+    box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr><th>ID</th><th>Nome</th><th>Doc</th><th>REPs vinculados</th></tr></thead><tbody>' +
+      V_PESSOAS.map(p => {
+        const reps = porPessoa[p.id_pessoa] || [];
+        const pills = reps.length ? reps.map(id => `<span class="pill c">${repNome(id)}</span>`).join(' ') : '<span class="muted">— nenhum —</span>';
+        const doc = p.CPF || p.PIS || '-';
+        return `<tr><td>${p.id_pessoa}</td><td>${p.Nome || '-'}</td><td>${doc}</td><td>${pills}</td></tr>`;
+      }).join('') + '</tbody></table></div>';
+  } else {
+    if (V_PENDING === null) V_PENDING = new Set(porPessoa[V_REP] || []);
+    const cur = V_PENDING;
+    $('v_savebox').style.display = 'block';
+    box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr><th></th><th>ID</th><th>Nome</th><th>Doc</th><th>Também em</th></tr></thead><tbody>' +
+      V_PESSOAS.map(p => {
+        const checked = cur.has(p.id_pessoa) ? 'checked' : '';
+        const outros = (porPessoa[p.id_pessoa] || []).filter(id => id !== V_REP);
+        const pills = outros.length ? outros.map(id => `<span class="pill c">${repNome(id)}</span>`).join(' ') : '<span class="muted">—</span>';
+        const doc = p.CPF || p.PIS || '-';
+        return `<tr>
+          <td><input type="checkbox" class="vchk" data-id="${p.id_pessoa}" ${checked}></td>
+          <td>${p.id_pessoa}</td><td>${p.Nome || '-'}</td><td>${doc}</td><td>${pills}</td>
+        </tr>`;
+      }).join('') + '</tbody></table></div>';
+    box.querySelectorAll('.vchk').forEach(c => {
+      c.onchange = () => {
+        const id = Number(c.dataset.id);
+        if (c.checked) V_PENDING.add(id); else V_PENDING.delete(id);
+      };
+    });
+  }
+}
+
+$('v_rep').onchange = () => { V_REP = Number($('v_rep').value); V_PENDING = null; renderVinculo(); };
+$('v_refresh').onclick = carregarVinculo;
+$('v_save').onclick = async () => {
+  try {
+    await api('/api/reps/' + V_REP + '/funcionarios', { method: 'PUT', body: JSON.stringify({ ids: [...V_PENDING] }) });
+    V_PENDING = null;
+    toast('Vínculos salvos no REP ' + V_REP + '.', 'success');
+    await carregarVinculo();
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+// ---------- Enviar pessoa ao REP (mantido) ----------
 $('u_port').onchange = () => { $('u_doclabel').textContent = $('u_port').value === '671' ? 'CPF' : 'PIS'; };
 $('u_send').onclick = async () => {
   const port = $('u_port').value;

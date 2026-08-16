@@ -113,4 +113,36 @@ export class IdCloudClient {
       [pisOuCpf]
     );
   }
+
+  // Lista funcionarios (pessoas) do tenant
+  async listarPessoas() {
+    const [rows] = await this.pool.query(
+      'SELECT id_pessoa, PIS, CPF, Nome, Codigo, Matricula, Admin FROM pessoas ORDER BY Nome'
+    );
+    return rows;
+  }
+
+  // Todos os vinculos pessoa<->equipamento (muitos-para-muitos via equip_pessoa)
+  async listarTodosVinculos() {
+    const [rows] = await this.pool.query('SELECT id_Pessoa, id_Equipamento FROM equip_pessoa');
+    return rows;
+  }
+
+  // Vinculos de um equipamento especifico
+  async listarVinculos(idEquipamento) {
+    const [rows] = await this.pool.query(
+      'SELECT id_Pessoa FROM equip_pessoa WHERE id_Equipamento = ?', [idEquipamento]
+    );
+    return rows.map(r => r.id_Pessoa);
+  }
+
+  // Define o SUBSET de funcionarios de um REP (substitui o conjunto atual)
+  async definirVinculos(idEquipamento, ids) {
+    await this.pool.query('DELETE FROM equip_pessoa WHERE id_Equipamento = ?', [idEquipamento]);
+    for (const id of (ids || [])) {
+      if (id) await this.pool.query(
+        'INSERT IGNORE INTO equip_pessoa (id_Pessoa, id_Equipamento) VALUES (?, ?)', [id, idEquipamento]
+      );
+    }
+  }
 }

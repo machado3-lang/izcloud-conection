@@ -115,7 +115,31 @@ app.get('/api/reps', async (req, res) => {
   catch (e) { res.status(502).json({ error: e.message }); }
 });
 
+// Vinculos pessoa<->REP (subset de funcionarios por equipamento)
+app.get('/api/reps/:id/funcionarios', async (req, res) => {
+  try { res.json(await new IdCloudClient(req.db).listarVinculos(Number(req.params.id))); }
+  catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+app.put('/api/reps/:id/funcionarios', async (req, res) => {
+  try {
+    await new IdCloudClient(req.db).definirVinculos(Number(req.params.id), req.body.ids);
+    res.json({ ok: true });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
 // ---------- Pessoas (escopo do tenant) ----------
+app.get('/api/pessoas', async (req, res) => {
+  try { res.json(await new IdCloudClient(req.db).listarPessoas()); }
+  catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Todos os vinculos pessoa<->equipamento do tenant
+app.get('/api/pessoas/vinculos', async (req, res) => {
+  try { res.json(await new IdCloudClient(req.db).listarTodosVinculos()); }
+  catch (e) { res.status(502).json({ error: e.message }); }
+});
+
 app.post('/api/pessoas', async (req, res) => {
   try {
     const { rep, pessoa } = req.body;
