@@ -458,6 +458,116 @@ Passos (resumo):
   ajustar `mapearUsuario`/`enviarUsuarios` se necessário. O import/push não depende de
   MySQL para falar com o REP (apenas para gravar no tenant).
 
+### 12.11 Estado consolidado do iZCloud (para retomada)
+
+Esta seção é o **índice único** para retomar o projeto. O sistema é uma nuvem própria
+para REPs ControlID 1510/671, multi-empresa, com biometria.
+
+#### Arquitetura
+- **Stack:** Node.js (Express) + MySQL. Deploy no Railway (auto-deploy por push no `main`).
+- **Isolamento em 3 níveis:**
+  1. `contas` (tabela `izcloud_core`) = login do **cliente** do iZCloud. Cada conta só enxerga as suas empresas.
+  2. `clientes` (tabela `izcloud_core`) = **EMPRESA** (tenant). Ganha `id_conta`,
+     perfil completo (`razao_social`, `cnpj`, `endereco`, `responsavel_nome`,
+     `responsavel_cpf`) e `login`/`senha_hash` para **API externa** (Secullum).
+     Cada empresa = 1 schema `tenant_XXXX`.
+  3. Dentro do schema da empresa: `equipamentos` (REPs), `pessoas` (funcionários),
+     `equip_pessoa` (vínculo REP×funcionário), `afd`, `templates` (biometria),
+     `sync_status`, `marcacoes`.
+- **Web login** (`POST /api/auth/login`) autentica a **conta** e devolve `token` + lista
+  de empresas. Ao selecionar uma empresa, o front envia `X-Empresa: <schema>` e todo o
+  app (REPs/Funcionários/AFDs/Usuários) opera sobre aquele tenant. **Trocar empresa = trocar header.**
+- **API externa** (Secullum): `Basic (empresa)` + header `X-Client-DB: <schema>` → valida
+  empresa e o "número do banco".
+
+#### Tabelas — `izcloud_core`
+- `contas(id_conta, login UNIQUE, senha_hash, nome, ativo)`
+- `clientes(id_cliente, id_conta, login UNIQUE, senha_hash, schema_name, razao_social,
+  nome_empresa, cnpj, endereco, responsavel_nome, responsavel_cpf, ativo)`
+- `usuarios(id_usuario, id_cliente, schema_name, login UNIQUE, senha_hash, nome, nivel, ativo)`
+
+#### Tabelas — schema da empresa (`tenant_XXXX`)
+- `equipamentos(... , ModoConexao ENUM('nuvem_puxa','rep_empurra'))`
+- `pessoas(id_pessoa, PIS, CPF, Nome, Codigo, Senha, Matricula, Admin, Rfid, Barras, ...)`
+- `equip_pessoa(id_Pessoa, id_Equipamento)` — vínculo (subset de funcionários por REP)
+- `afd(id, id_Equipamento, PIS, NSR, Data, Tipo, Dado, CRC, UNIQUE(id_Equipamento,NSR))`
+- `marcacoes(...)`, `sync_status(id_Equipamento, last_nsr, last_sync, ativo)`
+- `templates(id, id_pessoa, tipo, indice, dados LONGTEXT, UNIQUE(id_pessoa,tipo,indice))`
+
+#### Endpoints da API (resumo)
+| Método | Rota | Escopo | Função |
+|---|---|---|---|
+| POST | `/api/auth/login` | público | login da **conta** → token + empresas |
+| POST | `/api/auth/registro` | público | cria conta (+ 1ª empresa opcional) |
+| POST | `/api/auth/register` | `x-admin-key` (legado) | cria `clientes` (legacy) |
+| GET/POST | `/api/empresas` | conta (`authConta`) | listar/criar empresa |
+| PUT | `/api/empresas/:id` | conta | editar perfil da empresa |
+| GET/POST/DELETE | `/api/auth/usuarios[/:id]` | empresa (admin) | operadores |
+| GET | `/api/reps` | empresa (`X-Empresa`) | lista REPs |
+| POST | `/api/reps` | empresa | cadastra REP |
+| POST | `/api/reps/probe` | empresa | auto-detecta 1510/671 |
+| GET/PUT | `/api/reps/:id/funcionarios` | empresa | subset de funcionários do REP |
+| GET | `/api/pessoas` | empresa | lista funcionários |
+| POST | `/api/pessoas` | empresa | envia 1 funcionário ao REP |
+| GET | `/api/pessoas/vinculos` | empresa | todos os pares pessoa×REP |
+| GET | `/api/pessoas/biometria` | empresa | contagem D:/F: por pessoa |
+| POST | `/api/pessoas/importar` | empresa | REP → nuvem (lê users+biometria) |
+| POST | `/api/pessoas/sincronizar` | empresa | nuvem → REP (só vinculados + bio) |
+| POST | `/api/afd/sync` | empresa | pull incremental por NSR |
+| POST | `/api/afd/export` | empresa | export por período (download) |
+| POST | `/api/afd/fetch` | empresa | sincroniza + devolve (Secullum) |
+| POST | `/api/afd/push` | empresa | recebe AFD (modo `rep_empurra`) |
+| GET | `/api/health` | público | status |
+
+#### UI (`public/index.html`, SPA vanilla, sem build)
+- Login split-screen com **criar conta**.
+- Topo: seletor de **empresa** (se >1) + **cartão de perfil** (razão social, CNPJ,
+  endereço, responsável) + modal de cadastro/edição de empresa.
+- Abas: **REPs** (sondar/cadastrar/listar), **Funcionários** (vínculo REP×pessoa +
+  Sincronização com o REP: importar/enhar biometria + coluna Bio), **AFD**
+  (sincronizar/exportar), **Usuários** (operadores).
+- Design: glassmorphism (inspirado no `pontoweb`), sidebar, gradiente, toast, ícones SVG.
+
+#### Migrações obrigatórias (rode no MySQL da nuvem)
+```sql
+-- core
+CREATE TABLE contas ( id_conta INT AUTO_INCREMENT PRIMARY KEY, login VARCHAR(64) NOT NULL UNIQUE,
+  senha_hash VARCHAR(255) NOT NULL, nome VARCHAR(120), ativo BIT DEFAULT 1, criado_em DATETIME );
+ALTER TABLE clientes
+  ADD COLUMN id_conta INT,
+  ADD COLUMN razao_social VARCHAR(160),
+  ADD COLUMN endereco VARCHAR(200),
+  ADD COLUMN responsavel_nome VARCHAR(120),
+  ADD COLUMN responsavel_cpf VARCHAR(20);
+-- (opcional) vincular empresas ja existentes a uma conta:
+-- INSERT INTO contas (login, senha_hash, nome) VALUES ('admin', '<hash scrypt>', 'Migracao');
+-- UPDATE clientes SET id_conta = (SELECT id_conta FROM contas WHERE login='admin') WHERE id_conta IS NULL;
+
+-- tenant (EM CADA schema ja criado, exceto os novos):
+ALTER TABLE equipamentos ADD COLUMN ModoConexao ENUM('nuvem_puxa','rep_empurra') DEFAULT 'nuvem_puxa';
+CREATE TABLE templates ( id BIGINT AUTO_INCREMENT PRIMARY KEY, id_pessoa INT NOT NULL,
+  tipo VARCHAR(20), indice INT, dados LONGTEXT, DataAtualizacao DATETIME,
+  UNIQUE KEY uq_tpl (id_pessoa, tipo, indice), KEY idx_pessoa (id_pessoa) );
+```
+
+#### Feito (até aqui)
+- ✅ Multi-empresa por **conta** isolada + perfil completo da empresa + seletor no topo.
+- ✅ Vínculo REP × Funcionário (subset por REP via `equip_pessoa`) — Fase 1.
+- ✅ Biometria: ler/gravar usuários + digitais/faces, e push **filtrado por vínculo** — Fase 2.
+- ✅ UI glass/sidebar (Rota A, baseada no `pontoweb`).
+- ✅ Modo de conexão por REP (`nuvem_puxa`/`rep_empurra`) + endpoint `/api/afd/push`.
+
+#### Pendências / roadmap (não bloqueantes)
+1. **Validar biometria no REP real (192.168.100.132):** os nomes de campo de template
+   (`templates[].template/finger/type`, `facial[].faceTemplate`) e o envio em `add_users`
+   variam por firmware — ajustar `mapearUsuario`/`enviarUsuarios` conforme o REP devolver.
+2. Paginação de `get_afd` para REPs com AFD muito grande.
+3. TLS / proxy HTTPS em produção (o app escuta HTTP 3100).
+4. Cloudflare Spectrum para **IP fixo** (habilitar de verdade o modo `rep_empurra` em produção).
+5. Backup por tenant (`mysqldump <schema>`).
+6. Edição/remoção de funcionário (hoje é só inserção); e "Enviar ao REP" unitário já existe,
+   mas o envio em lote respeita o vínculo (`/api/pessoas/sincronizar`).
+
 ## 13. Deploy no Railway (definido)
 
 Decisão: subir no **Railway** a partir deste repo GitHub (Oracle Cloud Free foi
