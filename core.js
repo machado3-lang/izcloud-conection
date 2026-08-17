@@ -64,15 +64,27 @@ export async function verificarConexaoCore() {
   return out;
 }
 
-// Cria o banco/tabelas do core (idempotente). Usa o schema_core.sql, ignorando
-// as linhas de CREATE DATABASE/USE para respeitar o CORE_DB configurado.
+// Cria o banco/tabelas do core (idempotente). Conecta SEM database (pois o
+// banco pode nao existir ainda), cria o `izcloud_core` e depois roda o DDL das
+// tabelas na mesma conexao.
 export async function inicializarCore() {
-  const core = getCorePool();
-  const sql = fs.readFileSync(path.join(__dirname, 'schema_core.sql'), 'utf-8')
-    .split('\n')
-    .filter((l) => !/^\s*(CREATE\s+DATABASE|USE)\b/i.test(l))
-    .join('\n');
-  await runScript(core, sql);
+  const db = process.env.CORE_DB || 'izcloud_core';
+  const conn = await mysql.createConnection({ ...cfg() });
+  try {
+    await conn.query('CREATE DATABASE IF NOT EXISTS ??', [db]);
+    await conn.query('USE ??', [db]);
+    const sql = fs.readFileSync(path.join(__dirname, 'schema_core.sql'), 'utf-8')
+      .split('\n')
+      .filter((l) => !/^\s*(CREATE\s+DATABASE|USE)\b/i.test(l))
+      .join('\n');
+    const statements = sql
+      .split(';')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const st of statements) await conn.query(st);
+  } finally {
+    await conn.end();
+  }
   return true;
 }
 
