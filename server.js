@@ -10,7 +10,7 @@ import { probe, enviarUsuarios, lerUsuarios, mapearUsuario } from './repClient.j
 import { IdCloudClient } from './idcloud.js';
 import { gerarPorPeriodo } from './afd.js';
 import { sincronizarAfd, iniciarPoller } from './sync.js';
-import { getCorePool, getTenantPool, criarCliente, listarClientes, criarUsuario, listarUsuarios, removerUsuario, criarConta, verificarConta, listarEmpresas, criarEmpresa, atualizarEmpresa } from './core.js';
+import { getCorePool, getTenantPool, verificarConexaoCore, inicializarCore, criarCliente, listarClientes, criarUsuario, listarUsuarios, removerUsuario, criarConta, verificarConta, listarEmpresas, criarEmpresa, atualizarEmpresa } from './core.js';
 import { login, authTenant, authConta, requireAdmin, requireTenantAdmin } from './auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -35,6 +35,12 @@ app.get('/', (_, res) => {
 });
 
 app.get('/api/health', (_, res) => res.json({ status: 'ok', service: 'iZCloud', multiTenant: true }));
+
+// Diagnostico de banco (publico): ajuda a identificar falta de MySQL/env/isto.
+app.get('/api/health/db', async (_, res) => {
+  try { res.json(await verificarConexaoCore()); }
+  catch (e) { res.status(500).json({ erro: e.message }); }
+});
 
 // ---------- Autenticacao / Tenants ----------
 // Cria conta de cliente (setup). Protegido por IZCLOUD_ADMIN_KEY.
@@ -312,5 +318,15 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Poller silencioso multi-tenant (so roda se houver banco core)
 try { iniciarPoller(getCorePool, getTenantPool); } catch {}
+
+// Verificacao inicial de banco (aparece nos logs da Railway para facilitar debug)
+verificarConexaoCore()
+  .then((d) => console.log('[startup] DB core:', d.ok ? 'OK' : 'FALHOU', d.erro ? `(${d.erro})` : '', d.tabela_contas ? '' : '(tabela contas ausente)'))
+  .catch((e) => console.error('[startup] erro ao checar DB:', e.message));
+
+// Cria/atualiza o esquema do core (idempotente) na inicializacao.
+inicializarCore()
+  .then(() => console.log('[startup] esquema do core garantido (izcloud_core + tabelas)'))
+  .catch((e) => console.error('[startup] FALHA ao criar esquema do core:', e.message));
 
 app.listen(PORT, () => console.log(`iZCloud (multi-tenant) rodando em http://localhost:${PORT}`));

@@ -15,20 +15,28 @@ function cfg() {
     port: Number(process.env.IDCLOUD_PORT || 3306),
     user: process.env.IDCLOUD_USER || 'root',
     password: process.env.IDCLOUD_PASS || '',
+    connectTimeout: 8000,
+    acquireTimeout: 8000,
+    charset: 'utf8mb4',
   };
+}
+
+function makePool(database) {
+  const pool = mysql.createPool({
+    ...cfg(),
+    database,
+    ssl: { rejectUnauthorized: false },
+    waitForConnections: true,
+    connectionLimit: 5,
+  });
+  // Evita que erros de conexao derrubem o processo (ex.: MySQL ausente/caiu).
+  pool.on('error', (e) => console.error('[mysql] erro de pool:', e.code || e.message));
+  return pool;
 }
 
 let _core = null;
 export function getCorePool() {
-  if (!_core) {
-    _core = mysql.createPool({
-      ...cfg(),
-      database: process.env.CORE_DB || 'izcloud_core',
-      ssl: { rejectUnauthorized: false },
-      waitForConnections: true,
-      connectionLimit: 5,
-    });
-  }
+  if (!_core) _core = makePool(process.env.CORE_DB || 'izcloud_core');
   return _core;
 }
 
@@ -36,15 +44,36 @@ export function getCorePool() {
 const _tenants = new Map();
 export function getTenantPool(schemaName) {
   if (!_tenants.has(schemaName)) {
-    _tenants.set(schemaName, mysql.createPool({
-      ...cfg(),
-      database: schemaName,
-      ssl: { rejectUnauthorized: false },
-      waitForConnections: true,
-      connectionLimit: 5,
-    }));
+    _tenants.set(schemaName, makePool(schemaName));
   }
   return _tenants.get(schemaName);
+}
+
+// Diagnostico: consegue conectar ao core e a tabela `contas` existe?
+export async function verificarConexaoCore() {
+  const out = { host: cfg().host, port: cfg().port, database: process.env.CORE_DB || 'izcloud_core', ok: false, tabela_contas: false, erro: null };
+  try {
+    const core = getCorePool();
+    await core.query('SELECT 1');
+    out.ok = true;
+    const [t] = await core.query("SHOW TABLES LIKE 'contas'");
+    out.tabela_contas = t.length > 0;
+  } catch (e) {
+    out.erro = e.message;
+  }
+  return out;
+}
+
+// Cria o banco/tabelas do core (idempotente). Usa o schema_core.sql, ignorando
+// as linhas de CREATE DATABASE/USE para respeitar o CORE_DB configurado.
+export async function inicializarCore() {
+  const core = getCorePool();
+  const sql = fs.readFileSync(path.join(__dirname, 'schema_core.sql'), 'utf-8')
+    .split('\n')
+    .filter((l) => !/^\s*(CREATE\s+DATABASE|USE)\b/i.test(l))
+    .join('\n');
+  await runScript(core, sql);
+  return true;
 }
 
 // ---- Senha (scrypt, nativo do Node; sem dependencias externas) ----
