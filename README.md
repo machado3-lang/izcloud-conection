@@ -643,4 +643,78 @@ da URL do Railway para expor um **IP fixo** (TCP) que o REP aponta.
 - **Sem IP fixo**, continue no modo **FCGI IP-direto** (iZCloud puxa do REP a
   cada 60s): cadastre o REP pelo IP dele em `/api/reps/probe`.
 
+### 12.12 Sessão de retomada — correção do login na Railway (2026-08)
+
+**Sintoma:** a UI carregava em `https://izcloud-conection-production.up.railway.app`
+mas o login falhava. `GET /api/health` → `ok`. `POST /api/auth/login` → **502
+`Application failed to respond`** (edge `railway-hikari`).
+
+**Causa raiz:** o app na Railway não alcançava o MySQL. As env vars do serviço
+iZCloud estavam com os **valores de exemplo do README**, não os reais:
+- `IDCLOUD_HOST=localhost` → no container da Railway, `localhost` é o próprio
+  app, **não o MySQL**. A conexão ficava pendurada até o timeout → 502.
+- `IDCLOUD_PASS=senha_forte_aqui`, `JWT_SECRET=gere_um_segredo_forte`,
+  `IZCLOUD_ADMIN_KEY=chave_de_setup_inicial` → placeholders (funcionam, mas
+  frágeis — **regenerar em produção**, ver pendência §12.12.4).
+
+**Correções aplicadas (commits `a79666c` e `f66c20f`):**
+1. `core.js`: pool ganhou `connectTimeout: 8000`, `acquireTimeout: 8000`,
+   `charset: 'utf8mb4'` e um listener `pool.on('error')` para não derrubar o
+   processo quando o MySQL está ausente.
+2. `core.js`: `verificarConexaoCore()` (diagnóstico: conecta? `contas` existe?).
+3. `core.js`: `inicializarCore()` — **auto-create idempotente** do
+   `izcloud_core` + tabelas na subida do app (usa `schema_core.sql`, que já tem
+   `IF NOT EXISTS`). **Primeira tentativa falhou**: o pool era criado já
+   apontando para `izcloud_core` inexistente, então a conexão recusava antes do
+   `CREATE DATABASE`. Corrigido conectando **sem database**, fazendo
+   `CREATE DATABASE IF NOT EXISTS` + `USE` e rodando o DDL na mesma conexão
+   dedicada.
+4. `server.js`: novo endpoint público **`GET /api/health/db`** (retorna host/port,
+   `ok`, `tabela_contas`, `erro`) + chamadas de `inicializarCore()` e
+   `verificarConexaoCore()` no startup (com logs). Ordem: init antes do verify.
+
+**Ação do usuário (feita):** corrigir as env vars na Railway para os valores
+**reais** do serviço MySQL:
+- `IDCLOUD_HOST=mysql.railway.internal` (host real do MySQL, **não** localhost)
+- `IDCLOUD_PORT=3306`, `IDCLOUD_USER=root`
+- `IDCLOUD_PASS=<senha real do MySQL da Railway>`
+- `CORE_DB=izcloud_core`
+
+**Resultado:** após o deploy, `GET /api/health/db` →
+`{"ok":true,"tabela_contas":true,"erro":null}`. Banco e tabelas criados pelo
+próprio app.
+
+#### 12.12.1 Próximo passo (pendente ao parar a sessão)
+Criar a conta e logar (ainda não feito):
+- Pela UI: botão **"criar conta"** → `POST /api/auth/registro`
+  (`{login, senha, nome}`; opcional `empresa`). Retorna `token` + empresas.
+- Via API:
+  ```bash
+  curl -X POST https://izcloud-conection-production.up.railway.app/api/auth/registro \
+    -H "Content-Type: application/json" \
+    -d '{"login":"admin","senha":"<forte>","nome":"Antonio"}'
+  ```
+Depois, `POST /api/auth/login` com as mesmas credenciais deve funcionar e a
+plataforma fica utilizável (REPs, Pessoas, AFD, Usuários).
+
+#### 12.12.2 Como diagnosticar rápido em qualquer momento
+```
+curl https://izcloud-conection-production.up.railway.app/api/health/db
+```
+- `ok:false` + `erro:"Unknown database 'izcloud_core'"` → o `inicializarCore`
+  não rodou/criou (ver logs `[startup]` na Railway).
+- `ok:false` + `erro` de conexão (ECONNREFUSED / timeout) → `IDCLOUD_HOST`/
+  `IDCLOUD_PASS` ainda errados ou MySQL fora.
+- `ok:true` + `tabela_contas:false` → tabelas não criadas (DDL falhou; ver logs).
+
+#### 12.12.3 Tenants continuam criados por empresa
+`criarEmpresa`/`criarCliente` (core.js) continuam criando o schema
+`tenant_XXXX` + tabelas via `schema_tenant.sql` no ato do cadastro. O
+auto-init desta sessão cobre **só o core** (`izcloud_core`).
+
+#### 12.12.4 Pendência de segurança (não bloqueante)
+`JWT_SECRET` e `IZCLOUD_ADMIN_KEY` na Railway ainda usam os **placeholders**
+do README. Em produção, gerar segredos fortes (ex.: `openssl rand -hex 32`)
+e atualizar nas env vars. O `IZCLOUD_ADMIN_KEY` protege `POST /api/auth/register`.
+
 
