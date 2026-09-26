@@ -1,10 +1,17 @@
-# iZCloud — Nuvem própria para REPs ControlID (1510 / 671)
+aces# iZCloud — Nuvem própria para REPs ControlID (1510 / 671)
 
 Sistema para gerenciar pontos de marcação **ControlID iDClass (1510 e 671)** via
 própria nuvem, inspirado no modelo do **iDCloud** da ControlID — porém **sem usar o
 serviço pago deles** e com controle total dos dados.
 
 > Escopo: **somente 1510/671**. iDFace / REP-P (modo PUSH/poll) ficam de fora.
+
+> **📌 Para retomar o projeto, comece por [`docs/RETOMADA.md`](docs/RETOMADA.md).**
+> É o índice único com: o que foi feito, o que falta (priorizado), e a comparação
+> com os outros projetos de `C:\Producao` (`idacessoweb`, `Gerenciador REPs`).
+> O problema do **IP fixo** — que trava a conexão remota com os REPs — está
+> analisado em [`docs/IP-FIXO.md`](docs/IP-FIXO.md).
+> **Criação de contas / painel de administrador** está em [`docs/ADMIN.md`](docs/ADMIN.md).
 
 > **Escopo deste repositório:** este é o sistema real (Node.js + MySQL). O projeto
 > em `C:\Producao\Gerenciador REPs\opencode` (.NET) é um esqueleto incompleto e
@@ -568,6 +575,148 @@ CREATE TABLE templates ( id BIGINT AUTO_INCREMENT PRIMARY KEY, id_pessoa INT NOT
 6. Edição/remoção de funcionário (hoje é só inserção); e "Enviar ao REP" unitário já existe,
    mas o envio em lote respeita o vínculo (`/api/pessoas/sincronizar`).
 
+## 12.13 Sessão de retomada — 26/09/2026 (segurança: bypass de login corrigido)
+
+**Sintoma reportado:** a UI carregava na Railway, mas o sistema "não funcionava".
+
+**Causa raiz:** `auth.js` chamava as funções de verificação de credenciais
+**sem `await`**. Como são `async`, devolviam uma `Promise` — sempre "truthy" —
+então a checagem de senha **nunca era executada**:
+
+```js
+const c = verificarConta(loginU, senha);   // Promise, não o resultado
+if (!c) throw new Error('Credenciais invalidas');   // nunca disparava
+```
+
+Testado em produção: `POST /api/auth/login` com `admin/admin` (inexistente)
+devolvia **HTTP 200 + JWT válido**. O token, porém, saía sem `id_conta`
+(`{"tipo":"conta","iat":…}`), então **todas** as chamadas seguintes respondiam
+`403 Empresa nao pertence a esta conta` — login "funcionando" com o painel
+inerte. O mesmo bug em `verificarCredenciais` abria o acesso de sistemas
+externos (`Basic` sem `X-Client-DB`).
+
+**Além disso:** não existe painel de administrador. O "admin" era só o header
+`IZCLOUD_ADMIN_KEY`, e o cadastro era **público** — qualquer visitante criava a
+própria conta, o oposto do modelo desejado.
+
+### 12.13.1 Correções aplicadas
+
+| Item | Onde | O que foi feito |
+|---|---|---|
+| Bypass de login web | `auth.js` | `await verificarConta(...)` e `await verificarCredenciais(...)` |
+| Bypass de API externa | `auth.js` | `X-Client-DB` passa a ser **obrigatório** e validado (`/^tenant_\d+$/`) |
+| Token sem dono | `auth.js` | JWT agora leva `subject`, `issuer: 'izcloud'`, `alg` fixo em HS256 e `id_conta` obrigatório no `authConta` |
+| Cadastro público | `server.js` | `POST /api/auth/registro` desligado por padrão (`IZCLOUD_SIGNUP_ABERTA=false`); só com `x-admin-key`. A UI esconde o formulário via `GET /api/config` |
+| Empresa órfã | `server.js` | `POST /api/auth/register` exige `id_conta` (empresa sem dono não aparece na UI) |
+| Força bruta | `auth.js` | Limitador por IP: 8 tentativas / 15 min em `/api/auth/login` e nas rotas com `IZCLOUD_ADMIN_KEY` → **429** |
+| Enumeração de login | `core.js` | scrypt "de custo fixo" quando o login não existe (o tempo de resposta não revela quais logins existem) |
+| Segredos fracos | `auth.js` | `[auth] CRITICO` no log se `JWT_SECRET` < 32 chars, `IZCLOUD_ADMIN_KEY` < 24, ou iguais aos exemplos do README |
+| CORS aberto | `server.js` | `cors({origin:false})` por padrão (a UI é same-origin); extras via `IZCLOUD_ORIGENS` |
+| Vazamento de topologia | `server.js` | `GET /api/health/db` (host/porta do MySQL) passou a exigir `x-admin-key`; versão pública sem segredos em `GET /api/health/status` |
+| DoS por corpo grande | `server.js` | `express.json` de 50MB → 20MB |
+| `req.ip` errado | `server.js` | `trust proxy` ligado (sem isso, todo mundo tinha o IP do proxy e o limitador era inútil) |
+| Login de operador | `auth.js`/`core.js` | `POST /api/auth/login` agora aceita `usuarios` (operador) — antes a aba **Usuários** criava logins que **nunca** conseguiam entrar |
+| Validação de entrada | `auth.js` | `validarLogin` (3–64, `[A-Za-z0-9._-]`) e `validarSenha` (8–200) em todas as rotas de criação |
+| Erro de biblioteca | `core.js` | `acquireTimeout` removido (opção inválida no mysql2 3.23, gerava aviso) |
+
+### 12.13.2 Testes
+
+`.tmp-authtest/test.mjs` (20 asserções, sem MySQL — `core.js` é substituído por
+um stub): senha errada, login inexistente, conta inativa e senha vazia rejeitados;
+token de conta com `id_conta`/issuer/validade; login de operador; validações;
+limite de tentativas e 429; `x-admin-key` ausente/chave de exemplo rejeitados;
+token adulterado → 401; `Basic` sem `X-Client-DB` → 400; JWT de operador não
+acessa `/api/empresas`.
+
+> ⚠️ O diretório `.tmp-authtest/` é temporário e **não deve ser commitado**
+> (já está no `.gitignore` como `.tmp-*`). Para rodar de novo:
+> ```
+> Copy-Item auth.js .tmp-authtest\auth.js -Force; node .tmp-authtest\test.mjs
+> ```
+
+### 12.13.3 Pendência: segredos na Railway
+
+`JWT_SECRET` e `IZCLOUD_ADMIN_KEY` ainda são os placeholders do README. Gere e
+cadastre nas env vars do serviço:
+
+```bash
+openssl rand -hex 32   # rode duas vezes: uma para cada variável
+```
+
+Sem isso, qualquer pessoa pode forjar um JWT de administrador.
+
+### 12.13.4 Como criar a primeira conta (P0 antigo, agora com chave)
+
+```bash
+curl -X POST https://izcloud-conection-production.up.railway.app/api/auth/registro \
+  -H "x-admin-key: $IZCLOUD_ADMIN_KEY" -H "Content-Type: application/json" \
+  -d '{"login":"admin","senha":"<forte>","nome":"Antonio"}'
+```
+
+O passo a passo completo (inclusive o **desenho do painel de administrador**)
+está em [`docs/ADMIN.md`](docs/ADMIN.md).
+
+---
+
+## 12.14 Sessão de retomada — 26/09/2026 (painel de administrador implementado)
+
+O painel que faltava (§12.12.1 / `docs/ADMIN.md` §3) foi construído. Antes, o
+único "admin" era o header `IZCLOUD_ADMIN_KEY` via `curl`.
+
+### 12.14.1 O que foi feito
+
+| Camada | Onde | O quê |
+|---|---|---|
+| Banco | `schema_core.sql` | `contas.papel ENUM('admin','cliente')`, `ultimo_login`, `criado_por`; tabela `admin_auditoria` |
+| Migração | `core.js` | `aplicarMigracoes()` — confere `information_schema.COLUMNS` antes de cada `ALTER` (MySQL não tem `ADD COLUMN IF NOT EXISTS`). Roda sozinho na subida |
+| Bootstrap | `core.js` | `garantirAdminBootstrap()` cria/promove a conta de `IZCLOUD_ADMIN_LOGIN` / `IZCLOUD_ADMIN_SENHA` com `papel='admin'` |
+| Autorização | `auth.js` | `authAdmin` — exige JWT de conta e **lê o papel do banco a cada requisição** (rebaixar/desativar um admin tem efeito imediato) |
+| API | `server.js` | `GET /api/admin/panorama`, `GET/POST /api/admin/contas`, `PUT /api/admin/contas/:id`, `POST /api/admin/contas/:id/senha`, `GET/POST /api/admin/contas/:id/empresas`, `GET/PUT /api/admin/empresas[/:id]`, `GET /api/admin/auditoria` |
+| Regras | `core.js` | admin não altera o próprio papel nem desativa a si; a plataforma não pode ficar sem admin ativo; **nada é apagado**, só desativado; tudo vai para `admin_auditoria` com IP |
+| Tela | `public/admin.html` | 3 abas (Contas / Empresas / Auditoria), totais no topo, gerador de senha, modais de confirmação. Item "Administração" só aparece no painel para admin |
+| Diagnóstico | `server.js` | erro inesperado no login não é mais mascarado como "senha errada" — vira 503 e vai para o log |
+
+### 12.14.2 Bugs reais encontrados durante a implementação
+
+1. **`inicializarCore()` executava os comentários do `schema_core.sql`.** O
+   arquivo tem exemplos de migração comentados no fim (`-- INSERT INTO contas
+   ...`); o split por `;` os transformava em statements enviados ao MySQL. Agora
+   as linhas de comentário são removidas antes do split (igual ao `runScript`).
+2. **`resetarSenhaConta` usava `affectedRows`** para detectar conta inexistente —
+   que é `0` quando a senha nova é igual à antiga, produzindo um falso "Conta
+   nao encontrada". Agora consulta a existência antes.
+3. **Login mascarava erro interno como credencial inválida.** Qualquer exceção
+   (MySQL fora, bug) voltava como 401 "Credenciais invalidas", sem rastro. Agora
+   é logado e responde 503.
+
+### 12.14.3 Testes
+
+| Suíte | Resultado |
+|---|---|
+| `.tmp-authtest/test.mjs` — bypass de login, rate limit, token forjado | 20 asserções ✅ |
+| `.tmp-admintest/test.mjs` — `authAdmin` (quem entra, efeito do rebaixamento) | 16 asserções ✅ |
+| `.tmp-e2e/test.mjs` — app real contra driver MySQL falso, 16 cenários | 30 asserções ✅ |
+
+O `.tmp-e2e` sobe o `server.js` de verdade e exercita o fluxo completo: bootstrap
+do admin → login → criar conta de cliente com empresa → o cliente entra e vê só a
+sua empresa → token de cliente em `/api/admin` é 403 → reset de senha → desativar
+mantém as empresas → proteção do último admin → auditoria. **Ressalva:** o driver
+falso valida a lógica, não a sintaxe SQL contra um MySQL real.
+
+> Os diretórios `.tmp-*` são temporários e estão no `.gitignore` e no
+> `.dockerignore` (contêm cópia de `node_modules`).
+
+### 12.14.4 O que fazer na Railway
+
+1. Definir `IZCLOUD_ADMIN_LOGIN=admin` e `IZCLOUD_ADMIN_SENHA=<forte>`.
+2. Push no `main` (deploy) — o app cria a conta admin no boot.
+3. Entrar em `https://izcloud-conection-production.up.railway.app/admin.html`.
+4. Trocar a senha do admin e dos-placeholder de senha gerada para os clientes.
+
+Detalhes e desenho completo em [`docs/ADMIN.md`](docs/ADMIN.md).
+
+---
+
 ## 13. Deploy no Railway (definido)
 
 Decisão: subir no **Railway** a partir deste repo GitHub (Oracle Cloud Free foi
@@ -628,20 +777,35 @@ O Railway fornece **domínio, mas NÃO IP fixo**. Portanto:
   curl https://izcloud-conection-production.up.railway.app/api/health
   ```
 
-### 13.5 IP fixo na frente do Railway (via Cloudflare) — modo "REP empurra"
-O Railway só dá domínio, sem IP fixo, então o REP **não consegue apontar** para
-ele via `REPCONFIG.exe` (precisa de IP). Plano: colocar o **Cloudflare** à frente
-da URL do Railway para expor um **IP fixo** (TCP) que o REP aponta.
-- O REP fala FCGI **HTTPS na porta 443**; precisa de um IP estático que encaminhe
-  TCP 443 → URL do Railway.
-- Opção viável: **Cloudflare Spectrum** (IPs estáticos para TCP por porta) —
-  criar um Spectrum app apontando para `izcloud-conection-production.up.railway.app:443`.
-  (Cloudflare Tunnel/`cloudflared` dá domínio, não IP fixo — insuficiente sozinho
-  para o REP, que exige IP.)
-- Após o IP fixo do Cloudflare, use-o no `REPCONFIG.exe` (campo iDCloud) em vez
-  do domínio do Railway.
-- **Sem IP fixo**, continue no modo **FCGI IP-direto** (iZCloud puxa do REP a
-  cada 60s): cadastre o REP pelo IP dele em `/api/reps/probe`.
+### 13.5 IP fixo na frente do Railway — ver `docs/IP-FIXO.md` (atualizado 25/09/2026)
+
+> ⚠️ **A proposta original desta seção (Cloudflare Spectrum) estava errada.** A análise
+> completa, com as alternativas que realmente funcionam, está em
+> **[`docs/IP-FIXO.md`](docs/IP-FIXO.md)**. Resumo do que mudou:
+>
+> - **Cloudflare Spectrum não resolve.** Aplicações TCP/UDP customizadas exigem plano
+>   **Enterprise** (add-on pago), e **Static IP do Spectrum é recurso Enterprise**
+>   (sem UI, só via API). Pior: por padrão o Spectrum atribui **IPs dinâmicos**, que
+>   *podem mudar* — um REP com IP fixo no `REPCONFIG.exe` quebraria na rotação.
+> - **O problema é maior que "falta IP fixo".** O REP de homologação é `192.168.100.132`
+>   (LAN). O modo `nuvem_puxa` **também** está travado: a nuvem precisa alcançar o REP,
+>   e hoje não há caminho nenhum. Ambos os modos exigem rede pública.
+> - **Recomendação:** VPS barata (~$4–6/mês) com IP fixo + Caddy/nginx + Let's Encrypt
+>   encaminhando para a Railway. Entrega IP fixo **e** TLS de uma vez, e a Railway
+>   continua cuidando do app e do MySQL. Detalhes e opções sem custo em
+>   [`docs/IP-FIXO.md`](docs/IP-FIXO.md).
+> - **Sem IP fixo, siga em `nuvem_puxa`**, resolvendo o alcance do REP por
+>   Cloudflare Tunnel ou Tailscale no lado do cliente (grátis) — veja
+>   `docs/IP-FIXO.md` §5.2.
+> - **Lacuna conhecida:** mesmo com IP fixo, `/api/afd/push` hoje exige JWT
+>   (`server.js:130`), então um REP real não consegue chamar. Falta descobrir o
+>   protocolo de push do iDClass 1510/671 e adicionar auth de dispositivo.
+>   Ver `docs/IP-FIXO.md` §9.
+>
+> Resumo do texto original, mantido por contexto histórico: o REP fala FCGI HTTPS na
+> 443 e precisa de um IP estático que encaminhe TCP 443 → URL do Railway; aponte
+> esse IP no `REPCONFIG.exe` (campo iDCloud) em vez do domínio. Cloudflare
+> Tunnel/`cloudflared` dá domínio, não IP fixo.
 
 ### 12.12 Sessão de retomada — correção do login na Railway (2026-08)
 
@@ -716,5 +880,77 @@ auto-init desta sessão cobre **só o core** (`izcloud_core`).
 `JWT_SECRET` e `IZCLOUD_ADMIN_KEY` na Railway ainda usam os **placeholders**
 do README. Em produção, gerar segredos fortes (ex.: `openssl rand -hex 32`)
 e atualizar nas env vars. O `IZCLOUD_ADMIN_KEY` protege `POST /api/auth/register`.
+
+---
+
+## 14. Sessão de retomada — 25/09/2026 (documentação, sem mudança de código)
+
+Esta sessão foi de **organização e diagnóstico**: mapear o estado real dos três
+projetos de `C:\Producao`, decidir qual continuar, e documentar o problema do IP
+fixo. **Nenhuma linha de código de aplicação foi alterada.**
+
+### 14.1 Qual projeto continuar
+
+| Diretório | Última edição | Veredito |
+|---|---|---|
+| **`C:\Producao\iZCloud`** | **17/08/2026** | **✅ Continuar aqui** |
+| `C:\Producao\Gerenciador REPs` | 01/08/2026 | ❌ Não é projeto: binários oficiais ControlID (`REPCONFIG.exe`, `AFD Downloader/`) + esqueleto .NET abandonado |
+| `C:\Producao\idacessoweb` | 23/05/2026 | ⏸️ Escopo **diferente** (facial/iDFace), parado ~4 meses, sem git |
+
+Detalhes e justificativa em [`docs/RETOMADA.md`](docs/RETOMADA.md) §1.
+
+### 14.2 Correção: o Cloudflare Spectrum do §13.5 não resolve o IP fixo
+
+A proposta do §13.5 foi **corrigida** (ver o aviso no próprio §13.5 e
+[`docs/IP-FIXO.md`](docs/IP-FIXO.md) §6):
+
+1. Aplicações **TCP/UDP customizadas** no Spectrum exigem plano **Enterprise**
+   (add-on pago); Pro/Business só suportam protocolos selecionados.
+2. **Static IP do Spectrum é Enterprise**, sem UI — só via API.
+3. E o decisive: por padrão o Spectrum dá **IPs dinâmicos**, que *podem mudar*.
+   Um REP com IP fixo gravado no `REPCONFIG.exe` quebraria na rotação.
+
+**Recomendação:** VPS barata (~$4–6/mês) com IP fixo + Caddy/nginx + Let's Encrypt
+encaminhando para a Railway — resolve IP fixo **e** TLS de uma vez, mantendo app e
+MySQL na Railway. Alternativas sem custo (Cloudflare Tunnel / Tailscale) para
+ficar só no modo `nuvem_puxa`.
+
+### 14.3 Descoberta: o problema é maior que o IP fixo
+
+O REP de homologação é `192.168.100.132` — **LAN**. Portanto o modo
+`nuvem_puxa` (nuvem puxa o REP) **também não funciona hoje**: a nuvem não tem
+caminho até o REP. Os dois modos precisam de rede pública, só que em lados
+opostos. Detalhado em [`docs/IP-FIXO.md`](docs/IP-FIXO.md) §3.
+
+### 14.4 Descoberta: `/api/afd/push` não é alcançável por um REP real
+
+`server.js:130` aplica `app.use('/api/afd', authTenant)`, então `/api/afd/push`
+exige **JWT** (web) ou **Basic + `X-Client-DB`** (sistema externo) — um REP não
+tem nenhum dos dois. Além disso, o protocolo de push do iDCloud da ControlID
+(poll de comandos, eventos, `X-Device-Serial`) **não está implementado** no
+iZCloud; existe algo parecido no `idacessoweb/face-cloud` (rotas `/push`,
+`/result`, `/event`), mas para **iDFace**, não para iDClass 1510/671.
+Ver [`docs/IP-FIXO.md`](docs/IP-FIXO.md) §9.
+
+### 14.5 Caminho para destravar sem mexer em rede
+
+A pendência técnica mais urgente é **validar a biometria no REP real** (§12.10) —
+e ela **não depende de rede pública**: rodando o iZCloud na mesma LAN do REP,
+`/api/pessoas/importar` e `/api/pessoas/sincronizar` já funcionam via
+`repClient.js`. Ver [`docs/IP-FIXO.md`](docs/IP-FIXO.md) §8.
+
+### 14.6 Arquivos criados nesta sessão
+
+- `docs/RETOMADA.md` — índice único de retomada: status dos 3 projetos,
+  pendências priorizadas (P0–P4), mapa arquivo→tarefa, glossário.
+- `docs/IP-FIXO.md` — análise completa do IP fixo: requisitos reais do REP,
+  os dois modos de conexão, opções avaliadas, recomendação e riscos.
+
+### 14.7 Estado no encerramento
+
+- Último commit anterior: `6d96eb0` (17/08/2026). Árvore de trabalho **limpa**.
+- Backend de pé na Railway; `/api/health/db` → `{"ok":true,"tabela_contas":true}`.
+- **Continua pendente o passo P0:** criar a conta do primeiro cliente e fazer o
+  primeiro login (nunca foi feito — ver §12.12.1).
 
 

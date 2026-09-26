@@ -10,18 +10,41 @@ import { probe, enviarUsuarios, lerUsuarios, mapearUsuario } from './repClient.j
 import { IdCloudClient } from './idcloud.js';
 import { gerarPorPeriodo } from './afd.js';
 import { sincronizarAfd, iniciarPoller } from './sync.js';
-import { getCorePool, getTenantPool, verificarConexaoCore, inicializarCore, criarCliente, listarClientes, criarUsuario, listarUsuarios, removerUsuario, criarConta, verificarConta, listarEmpresas, criarEmpresa, atualizarEmpresa } from './core.js';
-import { login, authTenant, authConta, requireAdmin, requireTenantAdmin } from './auth.js';
+import { getCorePool, getTenantPool, verificarConexaoCore, inicializarCore, criarCliente, listarClientes, criarUsuario, listarUsuarios, removerUsuario, criarConta, verificarConta, listarEmpresas, criarEmpresa, atualizarEmpresa, listarContas, atualizarConta, resetarSenhaConta, listarTodasEmpresas, atualizarEmpresaAdmin, auditar, listarAuditoria } from './core.js';
+import { login, authTenant, authConta, authAdmin, requireAdmin, requireTenantAdmin, limiteTentativas, validarLogin, validarSenha } from './auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const AFD_DIR = path.join(__dirname, 'data', 'afd');
 if (!fs.existsSync(AFD_DIR)) fs.mkdirSync(AFD_DIR, { recursive: true });
 
 const app = express();
-app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+
+// A Railway/CDN proxeia o trafego: sem isso, req.ip seria sempre o IP do proxy
+// e o limitador de tentativas trataria todo mundo como o mesmo cliente.
+app.set('trust proxy', true);
+
+// CORS: a UI e servida na mesma origem, entao nao ha necessidade de liberar
+// nada. IZCLOUD_ORIGENS e para casos excepcionais (lista separada por virgula).
+const ORIGENS = (process.env.IZCLOUD_ORIGENS || '').split(',').map((s) => s.trim()).filter(Boolean);
+app.use(cors(ORIGENS.length ? { origin: ORIGENS, credentials: true } : { origin: false }));
+
+// 50MB de JSON em rota publica e um DoS facil; 20MB sobra para import de AFD.
+app.use(express.json({ limit: '20mb' }));
+
+// Headers basicos de seguranca. Sem CSP porque a UI e um unico HTML com
+// CSS/JS inline (ver public/index.html).
+app.use((_, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  next();
+});
 
 const PORT = process.env.PORT || 3100;
+
+// Auto-cadastro publico. Desligado por padrao: quem cria conta e o admin
+// (IZCLOUD_ADMIN_KEY / painel de administracao). Ver docs/ADMIN.md.
+const SIGNUP_ABERTA = /^(1|true|sim)$/i.test(String(process.env.IZCLOUD_SIGNUP_ABERTA || 'false'));
 
 app.get('/', (_, res) => {
   const index = path.join(__dirname, 'public', 'index.html');
@@ -36,17 +59,39 @@ app.get('/', (_, res) => {
 
 app.get('/api/health', (_, res) => res.json({ status: 'ok', service: 'iZCloud', multiTenant: true }));
 
-// Diagnostico de banco (publico): ajuda a identificar falta de MySQL/env/isto.
-app.get('/api/health/db', async (_, res) => {
+// Config publica consumida pela UI (ex.: esconder o formulario de cadastro).
+app.get('/api/config', (_, res) => res.json({ signup_aberta: SIGNUP_ABERTA }));
+
+// Diagnostico de banco. Detalhes de conexao (host/porta) so para quem tem a
+// IZCLOUD_ADMIN_KEY — o endpoint e publico, entao nao pode vazar a topologia
+// interna da nuvem.
+app.get('/api/health/db', requireAdmin, async (_, res) => {
   try { res.json(await verificarConexaoCore()); }
   catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
+// Mesmo diagnostico, versao publica e sem dados sensiveis.
+app.get('/api/health/status', async (_, res) => {
+  try {
+    const d = await verificarConexaoCore();
+    res.json({ ok: d.ok, tabela_contas: d.tabela_contas, erro: d.erro });
+  } catch (e) { res.status(500).json({ ok: false, erro: e.message }); }
+});
+
 // ---------- Autenticacao / Tenants ----------
-// Cria conta de cliente (setup). Protegido por IZCLOUD_ADMIN_KEY.
+// Criacao de conta. Desligada por padrao (IZCLOUD_SIGNUP_ABERTA=false): quem
+// cria conta e o administrador da plataforma. Ver docs/ADMIN.md.
+const cadastroLiberado = (req, res, next) => {
+  if (SIGNUP_ABERTA) return next();
+  return requireAdmin(req, res, next);
+};
+
+// Cria empresa para uma conta existente (setup legado; usa x-admin-key).
+// Exige id_conta: empresa sem dono nao aparece na UI e ninguem consegue acessar.
 app.post('/api/auth/register', requireAdmin, async (req, res) => {
   try {
-    const r = await criarCliente(req.body); // { login, senha, nome_empresa, cnpj }
+    if (!req.body.id_conta) throw new Error('Informe id_conta da conta que sera a dona da empresa');
+    const r = await criarCliente(req.body);
     res.json({ ok: true, ...r });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
@@ -56,21 +101,37 @@ app.get('/api/auth/clientes', requireAdmin, async (_, res) => {
   try { res.json(await listarClientes()); } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
-// Login -> JWT de CONTA + lista de empresas da conta (estilo iZCloud)
-app.post('/api/auth/login', async (req, res) => {
-  try { res.json(await login(req.body.login, req.body.senha)); }
-  catch (e) { res.status(401).json({ error: e.message }); }
+// Login -> JWT (conta ou operador) + lista de empresas.
+app.post('/api/auth/login', limiteTentativas('login'), async (req, res) => {
+  try {
+    res.json(await login(req.body.login, req.body.senha));
+  } catch (e) {
+    // Erros de validacao de formato sao uteis ao usuario; erro de credencial
+    // e sempre a mesma frase (nao revela se o login existe). Qualquer outra
+    // coisa (MySQL fora, bug) e logada: sem isso, um erro interno chega ao
+    // usuario como "senha errada" e nao ha como diagnosticar.
+    if (/^(Login invalido|Senha deve|Senha muito|Credenciais invalidas)/.test(e.message)) {
+      return res.status(401).json({ error: e.message });
+    }
+    console.error('[auth] erro inesperado no login:', detalheErro(e));
+    res.status(503).json({ error: 'Servico indisponivel. Tente novamente.' });
+  }
 });
 
-// Registro publico: cria a CONTA do cliente e (opcional) a 1a empresa.
-app.post('/api/auth/registro', async (req, res) => {
+// Cria a CONTA do cliente e (opcionalmente) a 1a empresa.
+// Fechado por padrao: exige IZCLOUD_SIGNUP_ABERTA=true ou x-admin-key.
+app.post('/api/auth/registro', cadastroLiberado, limiteTentativas('registro'), async (req, res) => {
   try {
     const { login: loginU, senha, nome, empresa } = req.body;
+    if (!loginU || !senha) throw new Error('Informe login e senha');
+    validarLogin(loginU);
+    validarSenha(senha);
     const c = await criarConta({ login: loginU, senha, nome });
     if (empresa && empresa.login) {
+      validarLogin(empresa.login);
+      validarSenha(empresa.senha);
       await criarEmpresa({ id_conta: c.id_conta, ...empresa });
     }
-    // reaproveita o login para retornar token + empresas
     res.json(await login(loginU, senha));
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
@@ -85,6 +146,8 @@ app.get('/api/empresas', async (req, res) => {
 
 app.post('/api/empresas', async (req, res) => {
   try {
+    validarLogin(req.body.login);
+    validarSenha(req.body.senha);
     const r = await criarEmpresa({ id_conta: req.conta.id_conta, ...req.body });
     res.json({ ok: true, ...r });
   } catch (e) { res.status(400).json({ error: e.message }); }
@@ -95,6 +158,147 @@ app.put('/api/empresas/:id', async (req, res) => {
     await atualizarEmpresa(req.conta.id_conta, Number(req.params.id), req.body);
     res.json({ ok: true });
   } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// =====================================================================
+// ADMINISTRACAO DA PLATAFORMA (/api/admin/*) — tela public/admin.html
+// Equivale ao "criar as contas dos usuarios" do iDCloud: o admin cria o login
+// e a senha de cada cliente, que depois administra as proprias empresas.
+// Regra: nada e apagado, apenas desativado (preserva schemas e dados de ponto).
+// =====================================================================
+app.use('/api/admin', authAdmin);
+
+const CAMPOS_EMPRESA = ['razao_social', 'nome_empresa', 'cnpj', 'endereco', 'responsavel_nome', 'responsavel_cpf'];
+function camposEmpresa(body) {
+  const out = {};
+  for (const k of CAMPOS_EMPRESA) if (body[k] !== undefined) out[k] = body[k];
+  return out;
+}
+
+// Visao geral: contas + empresas + totais.
+app.get('/api/admin/panorama', async (req, res) => {
+  try {
+    const [contas, empresas, auditoria] = await Promise.all([
+      listarContas(), listarTodasEmpresas(), listarAuditoria(15),
+    ]);
+    res.json({
+      contas,
+      empresas,
+      auditoria,
+      totais: {
+        contas: contas.length,
+        contas_ativas: contas.filter((c) => c.ativo).length,
+        empresas: empresas.length,
+        empresas_ativas: empresas.filter((e) => e.ativo).length,
+      },
+    });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+app.get('/api/admin/contas', async (_, res) => {
+  try { res.json(await listarContas()); } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Cria a conta do cliente e, opcionalmente, as empresas (cada uma = 1 tenant).
+app.post('/api/admin/contas', async (req, res) => {
+  try {
+    const { login: loginU, senha, nome, empresas } = req.body;
+    if (!loginU || !senha) throw new Error('Informe login e senha do cliente');
+    validarLogin(loginU);
+    validarSenha(senha);
+    const lista = Array.isArray(empresas) ? empresas : (empresas ? [empresas] : []);
+    for (const e of lista) {
+      if (!e.login || !e.senha) throw new Error('Cada empresa precisa de login e senha de API');
+      validarLogin(e.login);
+      validarSenha(e.senha);
+    }
+    const c = await criarConta({ login: loginU, senha, nome, papel: 'cliente', criado_por: req.admin.id_conta });
+    const criadas = [];
+    for (const e of lista) {
+      try {
+        criadas.push(await criarEmpresa({ id_conta: c.id_conta, ...e }));
+      } catch (err) {
+        // A conta ja existe: devolve o erro mas nao perde o que foi criado.
+        auditar({ id_conta: req.admin.id_conta, acao: 'empresa_falhou', alvo: e.login, detalhes: err.message, ip: req.ip });
+        throw new Error(`Conta "${loginU}" criada, mas a empresa "${e.login}" falhou: ${err.message}`);
+      }
+    }
+    await auditar({
+      id_conta: req.admin.id_conta, acao: 'conta_criada', alvo: loginU,
+      detalhes: `empresas: ${criadas.map((x) => x.schema).join(', ') || 'nenhuma'}`, ip: req.ip,
+    });
+    res.json({ ok: true, id_conta: c.id_conta, login: loginU, empresas: criadas });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Editar nome / papel / ativo. Nunca apaga.
+app.put('/api/admin/contas/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    await atualizarConta(id, req.body, req.admin.id_conta);
+    await auditar({
+      id_conta: req.admin.id_conta, acao: 'conta_alterada', alvo: String(req.params.id),
+      detalhes: JSON.stringify(req.body), ip: req.ip,
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.post('/api/admin/contas/:id/senha', async (req, res) => {
+  try {
+    validarSenha(req.body.senha);
+    await resetarSenhaConta(Number(req.params.id), req.body.senha);
+    await auditar({
+      id_conta: req.admin.id_conta, acao: 'senha_resetada', alvo: String(req.params.id), ip: req.ip,
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.get('/api/admin/contas/:id/empresas', async (req, res) => {
+  try {
+    const todas = await listarTodasEmpresas();
+    res.json(todas.filter((e) => e.id_conta === Number(req.params.id)));
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Adiciona uma empresa a uma conta existente.
+app.post('/api/admin/contas/:id/empresas', async (req, res) => {
+  try {
+    const id_conta = Number(req.params.id);
+    const contas = await listarContas();
+    if (!contas.some((c) => c.id_conta === id_conta)) throw new Error('Conta nao encontrada');
+    validarLogin(req.body.login);
+    validarSenha(req.body.senha);
+    const r = await criarEmpresa({ id_conta, ...req.body });
+    await auditar({
+      id_conta: req.admin.id_conta, acao: 'empresa_criada', alvo: req.body.login,
+      detalhes: `conta ${id_conta} -> ${r.schema}`, ip: req.ip,
+    });
+    res.json({ ok: true, ...r });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ---- Empresas (todas as contas) ----
+app.get('/api/admin/empresas', async (_, res) => {
+  try { res.json(await listarTodasEmpresas()); } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+app.put('/api/admin/empresas/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    await atualizarEmpresaAdmin(id, { ...camposEmpresa(req.body), ...(req.body.ativo !== undefined ? { ativo: req.body.ativo } : {}) });
+    await auditar({
+      id_conta: req.admin.id_conta, acao: 'empresa_alterada', alvo: String(req.params.id),
+      detalhes: JSON.stringify(req.body), ip: req.ip,
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ---- Auditoria ----
+app.get('/api/admin/auditoria', async (req, res) => {
+  try { res.json(await listarAuditoria(req.query.limite)); } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
 // ---------- Usuarios/operadores do tenant (multi-usuario por empresa) ----------
@@ -108,6 +312,8 @@ app.get('/api/auth/usuarios', async (req, res) => {
 
 app.post('/api/auth/usuarios', async (req, res) => {
   try {
+    validarLogin(req.body.login);
+    validarSenha(req.body.senha);
     const r = await criarUsuario({
       id_cliente: req.tenant.id_cliente, schema_name: req.tenant.schema,
       login: req.body.login, senha: req.body.senha, nome: req.body.nome,
@@ -320,13 +526,14 @@ app.use(express.static(path.join(__dirname, 'public')));
 try { iniciarPoller(getCorePool, getTenantPool); } catch {}
 
 // Cria/atualiza o esquema do core (idempotente) na inicializacao.
+const detalheErro = (e) => [e.code, e.errno, e.sqlMessage, e.message].filter(Boolean).join(' | ') || String(e);
 inicializarCore()
   .then(() => console.log('[startup] esquema do core garantido (izcloud_core + tabelas)'))
-  .catch((e) => console.error('[startup] FALHA ao criar esquema do core:', e.message));
+  .catch((e) => console.error('[startup] FALHA ao criar esquema do core:', detalheErro(e)));
 
 // Verificacao de banco (aparece nos logs da Railway para facilitar debug)
 verificarConexaoCore()
   .then((d) => console.log('[startup] DB core:', d.ok ? 'OK' : 'FALHOU', d.erro ? `(${d.erro})` : '', d.tabela_contas ? '' : '(tabela contas ausente)'))
-  .catch((e) => console.error('[startup] erro ao checar DB:', e.message));
+  .catch((e) => console.error('[startup] erro ao checar DB:', detalheErro(e)));
 
 app.listen(PORT, () => console.log(`iZCloud (multi-tenant) rodando em http://localhost:${PORT}`));

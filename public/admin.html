@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>iZCloud — Administracao da plataforma</title>
+<style>
+/* Mesmos tokens de public/index.html (design system do iZCloud). */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+:root {
+  --bg-primary: #0b1120;
+  --bg-secondary: #111827;
+  --glass-bg: rgba(17, 24, 39, 0.7);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --accent-primary: #0ea5e9;
+  --accent-secondary: #22c55e;
+  --accent-gradient: linear-gradient(135deg, #0ea5e9 0%, #22c55e 100%);
+  --text-primary: #ffffff;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-full: 9999px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+body {
+  background-color: var(--bg-primary); color: var(--text-primary); min-height: 100vh;
+  background-image:
+    radial-gradient(circle at 15% 50%, rgba(14,165,233,.15), transparent 25%),
+    radial-gradient(circle at 85% 30%, rgba(34,197,94,.12), transparent 25%),
+    radial-gradient(circle at 50% 90%, rgba(239,68,68,.06), transparent 30%);
+}
+.topbar {
+  display: flex; align-items: center; gap: 1rem; padding: .9rem 1.5rem;
+  background: var(--glass-bg); backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--glass-border); position: sticky; top: 0; z-index: 20; flex-wrap: wrap;
+}
+.brand { display: flex; align-items: center; gap: .6rem; font-weight: 700; font-size: 1.05rem; }
+.brand-icon {
+  width: 32px; height: 32px; background: var(--accent-gradient); border-radius: var(--radius-md);
+  display: flex; align-items: center; justify-content: center; color: #fff;
+}
+.topbar .spacer { flex: 1; }
+.main { max-width: 1400px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+.page-title { font-size: 1.9rem; font-weight: 700; letter-spacing: -1px; }
+.page-subtitle { color: var(--text-secondary); margin-top: .3rem; font-size: .92rem; }
+.tabs { display: flex; gap: .5rem; margin: 1.5rem 0; flex-wrap: wrap; }
+.tab {
+  padding: .55rem 1.1rem; border-radius: var(--radius-full); font-size: .9rem; font-weight: 500;
+  background: rgba(255,255,255,.03); border: 1px solid var(--glass-border);
+  color: var(--text-secondary); cursor: pointer; transition: all .2s;
+}
+.tab:hover { color: var(--text-primary); }
+.tab.active { background: var(--accent-gradient); color: #fff; border-color: transparent; box-shadow: 0 4px 12px rgba(14,165,233,.3); }
+.glass-card {
+  background: var(--glass-bg); backdrop-filter: blur(16px); border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg); padding: 1.5rem; box-shadow: var(--shadow-glass);
+}
+.glass-card h3 { font-size: 1.05rem; color: var(--accent-primary); display: flex; align-items: center; gap: .5rem; margin-bottom: 1rem; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+.stat { background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: var(--radius-md); padding: 1rem 1.2rem; }
+.stat .k { font-size: .72rem; text-transform: uppercase; letter-spacing: .5px; color: var(--text-muted); }
+.stat .v { font-size: 1.7rem; font-weight: 700; margin-top: .2rem; }
+.row { display: flex; gap: 12px; flex-wrap: wrap; }
+.row > div { flex: 1; min-width: 160px; }
+label.fld { display: block; font-size: .8rem; color: var(--text-secondary); margin: 10px 0 4px; }
+.form-input {
+  width: 100%; background: rgba(255,255,255,.03); border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md); color: var(--text-primary); padding: .7rem .9rem;
+  font-size: .92rem; outline: none; transition: border-color .2s;
+}
+.form-input:focus { border-color: var(--accent-primary); }
+.form-input::placeholder { color: var(--text-muted); }
+select.form-input option { background: var(--bg-secondary); }
+.btn-primary {
+  background: var(--accent-gradient); color: #fff; border: none; padding: .7rem 1.4rem;
+  border-radius: var(--radius-full); font-weight: 600; font-size: .9rem; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 4px 15px rgba(14,165,233,.3);
+}
+.btn-primary:hover { filter: brightness(1.08); }
+.btn-ghost {
+  background: transparent; color: var(--text-secondary); border: 1px solid var(--glass-border);
+  padding: .5rem .9rem; border-radius: var(--radius-md); cursor: pointer; font-size: .82rem;
+}
+.btn-ghost:hover { color: var(--text-primary); border-color: var(--accent-primary); }
+.btn-danger { background: var(--danger); color: #fff; border: none; padding: .4rem .75rem; border-radius: var(--radius-md); cursor: pointer; font-size: .8rem; }
+.btn-ok { background: var(--success); color: #fff; border: none; padding: .4rem .75rem; border-radius: var(--radius-md); cursor: pointer; font-size: .8rem; }
+.data-table-container { overflow-x: auto; margin-top: 1rem; }
+.data-table { width: 100%; border-collapse: separate; border-spacing: 0; text-align: left; }
+.data-table th {
+  color: var(--text-secondary); font-weight: 500; font-size: .75rem; text-transform: uppercase;
+  letter-spacing: .5px; padding: .8rem 1rem; border-bottom: 1px solid var(--glass-border); white-space: nowrap;
+}
+.data-table td { padding: .8rem 1rem; border-bottom: 1px solid rgba(255,255,255,.03); font-size: .88rem; vertical-align: middle; }
+.data-table tr:hover td { background: rgba(255,255,255,.02); }
+.data-table .acts { display: flex; gap: .35rem; flex-wrap: wrap; }
+.pill { display: inline-block; padding: .2rem .65rem; border-radius: var(--radius-full); font-size: .7rem; font-weight: 600; white-space: nowrap; }
+.pill.c { background: rgba(14,165,233,.15); color: var(--accent-primary); }
+.pill.g { background: rgba(34,197,94,.15); color: var(--success); }
+.pill.am { background: rgba(245,158,11,.15); color: var(--warning); }
+.pill.r { background: rgba(239,68,68,.15); color: var(--danger); }
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 9998; display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.6); backdrop-filter: blur(4px); padding: 1rem;
+}
+#toast-box { position: fixed; top: 1rem; right: 1rem; z-index: 9999; display: flex; flex-direction: column; gap: .5rem; max-width: 380px; }
+.msg { padding: .7rem 1rem; border-radius: var(--radius-md); font-size: .88rem; white-space: pre-wrap; }
+.msg.ok { background: rgba(34,197,94,.12); border: 1px solid var(--success); color: #bbf7d0; }
+.msg.err { background: rgba(239,68,68,.12); border: 1px solid var(--danger); color: #fecaca; }
+.msg.warn { background: rgba(245,158,11,.12); border: 1px solid var(--warning); color: #fde68a; }
+.muted { color: var(--text-muted); }
+.hidden { display: none !important; }
+.fade-in { animation: fade .35s ease; }
+@keyframes fade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><div class="brand-icon" id="brand-ico"></div><span>iZCloud</span></div>
+  <span class="pill am" id="adm-pill">administracao</span>
+  <div class="spacer"></div>
+  <span class="muted" style="font-size:.85rem;" id="whoami"></span>
+  <button class="btn-ghost" id="go_app" type="button">Ir para o painel</button>
+  <button class="btn-ghost" id="logout" type="button">Sair</button>
+</header>
+
+<main class="main">
+  <div>
+    <div class="page-title">Administração da plataforma</div>
+    <div class="page-subtitle">Crie os logins e senhas dos clientes. Cada cliente administra as próprias empresas.</div>
+  </div>
+
+  <div id="sem_acesso" class="msg err hidden" style="margin-top:1.5rem;"></div>
+
+  <div id="conteudo" class="hidden">
+    <div class="stats" id="stats"></div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="contas" type="button">Contas</button>
+      <button class="tab" data-tab="empresas" type="button">Empresas</button>
+      <button class="tab" data-tab="auditoria" type="button">Auditoria</button>
+    </div>
+
+    <!-- Contas -->
+    <section data-tab="contas">
+      <div class="glass-card">
+        <h3><span id="h-contas"></span> Contas de acesso</h3>
+        <div class="row" style="align-items:center;">
+          <div style="flex:0 0 auto;">
+            <button class="btn-primary" id="btn_nova" type="button">+ Nova conta</button>
+          </div>
+          <div class="muted" style="font-size:.82rem;">Desativar bloqueia o login sem apagar empresas nem dados.</div>
+        </div>
+        <div id="tab_contas"></div>
+      </div>
+    </section>
+
+    <!-- Empresas -->
+    <section data-tab="empresas" class="hidden">
+      <div class="glass-card">
+        <h3><span id="h-empresas"></span> Empresas de todos os clientes</h3>
+        <div class="muted" style="font-size:.82rem;margin-bottom:.5rem;">
+          Cada empresa tem um schema proprio (<code>tenant_XXXX</code>) — o "numero do banco" no acesso externo.
+        </div>
+        <div id="tab_empresas"></div>
+      </div>
+    </section>
+
+    <!-- Auditoria -->
+    <section data-tab="auditoria" class="hidden">
+      <div class="glass-card">
+        <h3><span id="h-aud"></span> Auditoria</h3>
+        <div class="row" style="align-items:center;margin-bottom:.5rem;">
+          <div style="flex:0 0 auto;"><button class="btn-ghost" id="btn_aud" type="button">Atualizar</button></div>
+          <div class="muted" style="font-size:.82rem;">Acoes do administrador da plataforma.</div>
+        </div>
+        <div id="tab_auditoria"></div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<!-- Modal: nova conta -->
+<div id="mConta" class="modal-overlay hidden">
+  <div class="glass-card" style="width:100%;max-width:640px;max-height:92vh;overflow-y:auto;">
+    <h3>Nova conta de cliente</h3>
+    <div class="row">
+      <div><label class="fld">Login</label><input id="c_login" class="form-input" placeholder="cliente1" /></div>
+      <div><label class="fld">Nome</label><input id="c_nome" class="form-input" placeholder="João da Silva" /></div>
+    </div>
+    <div class="row">
+      <div><label class="fld">Senha inicial</label><input id="c_senha" type="password" class="form-input" /></div>
+      <div style="display:flex;align-items:flex-end;"><button class="btn-ghost" id="c_gerar" type="button" style="margin-bottom:1px;">Gerar senha</button></div>
+    </div>
+    <p class="muted" style="font-size:.78rem;margin-top:.5rem;">Login: 3–64 caracteres (letras, numeros, . _ -). Senha: minimo 8.</p>
+
+    <div style="border-top:1px solid var(--glass-border);margin:1.2rem 0 .5rem;padding-top:1rem;">
+      <label style="display:flex;align-items:center;gap:.5rem;font-size:.9rem;cursor:pointer;">
+        <input type="checkbox" id="c_com_empresa" checked /> Criar ja a primeira empresa
+      </label>
+    </div>
+    <div id="c_empresa_bloco">
+      <div class="row">
+        <div style="flex:2;"><label class="fld">Razao social</label><input id="e_razao" class="form-input" placeholder="Empresa 1 LTDA" /></div>
+        <div><label class="fld">Nome fantasia</label><input id="e_nome" class="form-input" /></div>
+      </div>
+      <div class="row">
+        <div><label class="fld">CNPJ</label><input id="e_cnpj" class="form-input" placeholder="12345678000100" /></div>
+        <div style="flex:2;"><label class="fld">Endereco</label><input id="e_end" class="form-input" /></div>
+      </div>
+      <div class="row">
+        <div><label class="fld">Responsavel</label><input id="e_resp" class="form-input" /></div>
+        <div><label class="fld">CPF do responsavel</label><input id="e_resp_cpf" class="form-input" /></div>
+      </div>
+      <div class="row">
+        <div><label class="fld">Login da empresa (acesso externo)</label><input id="e_login" class="form-input" placeholder="empresa1" /></div>
+        <div><label class="fld">Senha da empresa</label><input id="e_senha" type="password" class="form-input" /></div>
+      </div>
+    </div>
+
+    <div id="m_conta_msg" style="margin-top:1rem;"></div>
+    <div style="display:flex;gap:.75rem;justify-content:flex-end;margin-top:1rem;">
+      <button class="btn-ghost" id="c_cancel" type="button">Cancelar</button>
+      <button class="btn-primary" id="c_save" type="button">Criar conta</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: edicao generica -->
+<div id="mEdit" class="modal-overlay hidden">
+  <div class="glass-card" style="width:100%;max-width:520px;max-height:92vh;overflow-y:auto;">
+    <h3 id="m_edit_title">Editar</h3>
+    <div id="m_edit_corpo"></div>
+    <div id="m_edit_msg" style="margin-top:1rem;"></div>
+    <div style="display:flex;gap:.75rem;justify-content:flex-end;margin-top:1rem;">
+      <button class="btn-ghost" id="m_edit_cancel" type="button">Cancelar</button>
+      <button class="btn-primary" id="m_edit_save" type="button">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast-box"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const API = '';
+let TOKEN = localStorage.getItem('iz_token') || '';
+let PERFIL = JSON.parse(localStorage.getItem('iz_perfil') || '{}');
+let DADOS = { contas: [], empresas: [], auditoria: [], totais: {} };
+
+const ICONS = {
+  shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  building: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M8 10h.01M16 10h.01M8 14h.01M16 14h.01"/>',
+  history: '<path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/>',
+  key: '<path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3"/>',
+  plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+};
+function ic(name, size = 16) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ''}</svg>`;
+}
+
+// ---------- helpers ----------
+function headers() {
+  return { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + TOKEN };
+}
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, { ...opts, headers: headers() });
+  let data = null;
+  if ((res.headers.get('content-type') || '').includes('application/json')) data = await res.json();
+  if (!res.ok) throw new Error((data && (data.error || data.detalhe)) || ('HTTP ' + res.status));
+  return data;
+}
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function toast(msg, type = 'info') {
+  const colors = {
+    info: ['rgba(14,165,233,.15)', 'var(--accent-primary)', 'var(--accent-primary)'],
+    success: ['rgba(34,197,94,.15)', 'var(--success)', 'var(--success)'],
+    error: ['rgba(239,68,68,.15)', 'var(--danger)', 'var(--danger)'],
+  };
+  const c = colors[type] || colors.info;
+  const el = document.createElement('div');
+  el.className = 'fade-in';
+  el.style.cssText = `padding:.75rem 1rem;border-radius:var(--radius-md);background:${c[0]};border:1px solid ${c[1]};color:${c[2]};font-size:.85rem;cursor:pointer;backdrop-filter:blur(8px);`;
+  el.textContent = msg;
+  el.onclick = () => el.remove();
+  $('toast-box').appendChild(el);
+  setTimeout(() => el.remove(), 5000);
+}
+function dataBR(v) {
+  if (!v) return '-';
+  const d = v instanceof Date ? v : new Date(v);
+  if (isNaN(d)) return '-';
+  return d.toLocaleString('pt-BR');
+}
+function gerarSenha() {
+  const a = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const b = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%&*';
+  let s = '';
+  for (let i = 0; i < 4; i++) s += a[Math.floor(Math.random() * a.length)];
+  s += a[Math.floor(Math.random() * a.length)] + a[Math.floor(Math.random() * a.length)];
+  for (let i = 0; i < 6; i++) s += b[Math.floor(Math.random() * b.length)];
+  return s;
+}
+function mostrarErro(el, e) { el.className = 'msg err'; el.textContent = e.message || String(e); }
+
+// ---------- autenticacao / permissao ----------
+$('go_app').onclick = () => { location.href = '/'; };
+$('logout').onclick = () => {
+  ['iz_token', 'iz_nome', 'iz_emp_schema', 'iz_emp_id', 'iz_perfil'].forEach((k) => localStorage.removeItem(k));
+  location.href = '/';
+};
+
+function semAcesso(msg) {
+  $('sem_acesso').classList.remove('hidden');
+  $('sem_acesso').textContent = msg;
+  $('whoami').textContent = '';
+}
+
+if (!TOKEN) {
+  semAcesso('Faca login no painel para acessar a administracao.');
+} else if (PERFIL.tipo !== 'conta' || PERFIL.papel !== 'admin') {
+  semAcesso('Sua conta nao e administradora da plataforma. O acesso a esta tela e restrito ao administrador.');
+} else {
+  $('conteudo').classList.remove('hidden');
+  $('whoami').textContent = (localStorage.getItem('iz_nome') || 'Administrador') + ' · admin';
+  carregar();
+}
+
+// ---------- dados ----------
+async function carregar() {
+  try {
+    DADOS = await api('/api/admin/panorama');
+    renderStats();
+    renderContas();
+    renderEmpresas();
+    renderAuditoria();
+  } catch (e) {
+    if (e.message === 'Token invalido ou expirado') {
+      semAcesso('Sessao expirada. Entre novamente no painel.');
+      $('conteudo').classList.add('hidden');
+    } else toast(e.message, 'error');
+  }
+}
+
+function renderStats() {
+  const t = DADOS.totais || {};
+  const cards = [
+    ['Contas', t.contas || 0],
+    ['Contas ativas', t.contas_ativas || 0],
+    ['Empresas', t.empresas || 0],
+    ['Empresas ativas', t.empresas_ativas || 0],
+  ];
+  $('stats').innerHTML = cards.map(([k, v]) =>
+    `<div class="stat"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join('');
+}
+
+function renderContas() {
+  const box = $('tab_contas');
+  if (!DADOS.contas.length) { box.innerHTML = '<p class="muted" style="margin-top:1rem;">Nenhuma conta cadastrada.</p>'; return; }
+  box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr>' +
+    '<th>ID</th><th>Login</th><th>Nome</th><th>Papel</th><th>Empresas</th><th>Status</th><th>Ultimo login</th><th>Acoes</th>' +
+    '</tr></thead><tbody>' +
+    DADOS.contas.map((c) => {
+      const papel = c.papel === 'admin' ? '<span class="pill am">admin</span>' : '<span class="pill c">cliente</span>';
+      const status = c.ativo ? '<span class="pill g">ativo</span>' : '<span class="pill r">inativo</span>';
+      const emp = c.n_empresas
+        ? c.schemas.map((s) => `<span class="pill c">${esc(s)}</span>`).join(' ')
+        : '<span class="muted">-</span>';
+      return `<tr>
+        <td>${c.id_conta}</td>
+        <td><b>${esc(c.login)}</b></td>
+        <td>${esc(c.nome || '-')}</td>
+        <td>${papel}</td>
+        <td>${c.n_empresas} ${emp}</td>
+        <td>${status}</td>
+        <td class="muted">${esc(dataBR(c.ultimo_login))}</td>
+        <td><div class="acts">
+          <button class="btn-ghost" data-edit="${c.id_conta}">Editar</button>
+          <button class="btn-ghost" data-senha="${c.id_conta}">Senha</button>
+          <button class="btn-ghost" data-emp="${c.id_conta}">+ Empresa</button>
+          ${c.ativo
+            ? `<button class="btn-danger" data-off="${c.id_conta}">Desativar</button>`
+            : `<button class="btn-ok" data-on="${c.id_conta}">Ativar</button>`}
+        </div></td>
+      </tr>`;
+    }).join('') + '</tbody></table></div>';
+
+  box.querySelectorAll('button').forEach((b) => {
+    const id = Number(b.dataset.edit || b.dataset.senha || b.dataset.emp || b.dataset.off || b.dataset.on);
+    b.onclick = () => {
+      if (b.dataset.off !== undefined) return mudarAtivo(id, false);
+      if (b.dataset.on !== undefined) return mudarAtivo(id, true);
+      if (b.dataset.senha !== undefined) return editarSenha(id);
+      if (b.dataset.emp !== undefined) return novaEmpresa(id);
+      if (b.dataset.edit !== undefined) return editarConta(id);
+    };
+  });
+}
+
+function renderEmpresas() {
+  const box = $('tab_empresas');
+  if (!DADOS.empresas.length) { box.innerHTML = '<p class="muted" style="margin-top:1rem;">Nenhuma empresa cadastrada.</p>'; return; }
+  box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr>' +
+    '<th>ID</th><th>Razao social</th><th>CNPJ</th><th>Schema</th><th>Login (API)</th><th>Conta</th><th>Status</th><th>Acoes</th>' +
+    '</tr></thead><tbody>' +
+    DADOS.empresas.map((e) => `<tr>
+      <td>${e.id_cliente}</td>
+      <td><b>${esc(e.razao_social || e.nome_empresa || '-')}</b><div class="muted" style="font-size:.75rem;">${esc(e.responsavel_nome || '')}</div></td>
+      <td>${esc(e.cnpj || '-')}</td>
+      <td><span class="pill c">${esc(e.schema)}</span></td>
+      <td>${esc(e.login_api || '-')}</td>
+      <td>${esc(e.login_conta || '<orfa>')}</td>
+      <td>${e.ativo ? '<span class="pill g">ativo</span>' : '<span class="pill r">inativo</span>'}</td>
+      <td><div class="acts">
+        <button class="btn-ghost" data-eemp="${e.id_cliente}">Editar</button>
+        ${e.ativo
+          ? `<button class="btn-danger" data-eoff="${e.id_cliente}">Desativar</button>`
+          : `<button class="btn-ok" data-eon="${e.id_cliente}">Ativar</button>`}
+      </div></td>
+    </tr>`).join('') + '</tbody></table></div>';
+
+  box.querySelectorAll('button').forEach((b) => {
+    const id = Number(b.dataset.eemp || b.dataset.eoff || b.dataset.eon);
+    b.onclick = async () => {
+      try {
+        if (b.dataset.eoff !== undefined || b.dataset.eon !== undefined) {
+          const ativo = b.dataset.eon !== undefined;
+          await api('/api/admin/empresas/' + id, { method: 'PUT', body: JSON.stringify({ ativo }) });
+          toast('Empresa ' + (ativo ? 'ativada' : 'desativada') + '.', 'success');
+          return carregar();
+        }
+        editarEmpresa(id);
+      } catch (e) { toast(e.message, 'error'); }
+    };
+  });
+}
+
+function renderAuditoria() {
+  const box = $('tab_auditoria');
+  if (!DADOS.auditoria.length) { box.innerHTML = '<p class="muted" style="margin-top:1rem;">Nenhuma acao registrada.</p>'; return; }
+  box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr>' +
+    '<th>Quando</th><th>Admin</th><th>Acao</th><th>Alvo</th><th>Detalhes</th><th>IP</th>' +
+    '</tr></thead><tbody>' +
+    DADOS.auditoria.map((a) => `<tr>
+      <td class="muted" style="white-space:nowrap;">${esc(dataBR(a.criado_em))}</td>
+      <td>${esc(a.admin_login || '-')}</td>
+      <td><span class="pill c">${esc(a.acao)}</span></td>
+      <td>${esc(a.alvo || '-')}</td>
+      <td class="muted" style="font-size:.78rem;max-width:320px;">${esc(a.detalhes || '-')}</td>
+      <td class="muted">${esc(a.ip || '-')}</td>
+    </tr>`).join('') + '</tbody></table></div>';
+}
+
+// ---------- acoes ----------
+// Confirmacao no mesmo estilo do painel (public/index.html) em vez de confirm().
+function confirmar({ title = 'Confirmacao', message = '', okLabel = 'Confirmar', danger = false }) {
+  return new Promise((resolve) => {
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay';
+    const card = document.createElement('div');
+    card.className = 'glass-card';
+    card.style.cssText = 'max-width:460px;width:100%;';
+    card.innerHTML =
+      `<h3>${esc(title)}</h3>
+       <p style="color:var(--text-secondary);line-height:1.6;white-space:pre-wrap;margin-bottom:1.5rem;">${esc(message)}</p>
+       <div style="display:flex;gap:.75rem;justify-content:flex-end;">
+         <button class="btn-ghost" id="cf-cancel">Cancelar</button>
+         <button class="${danger ? 'btn-danger' : 'btn-primary'}" id="cf-ok">${esc(okLabel)}</button>
+       </div>`;
+    ov.appendChild(card);
+    document.body.appendChild(ov);
+    const close = (v) => { ov.remove(); resolve(v); };
+    card.querySelector('#cf-cancel').onclick = () => close(false);
+    card.querySelector('#cf-ok').onclick = () => close(true);
+  });
+}
+
+async function mudarAtivo(id, ativo) {
+  const c = DADOS.contas.find((x) => x.id_conta === id);
+  const ok = await confirmar({
+    title: (ativo ? 'Ativar' : 'Desativar') + ' conta',
+    message: (ativo ? 'Ativar' : 'Desativar') + ' a conta "' + c.login + '"?\n\n' +
+      (ativo ? 'O cliente volta a entrar no painel.'
+            : 'O cliente nao podera entrar. Empresas, REPs e marcações são preservados.'),
+    okLabel: ativo ? 'Ativar' : 'Desativar',
+    danger: !ativo,
+  });
+  if (!ok) return;
+  try {
+    await api('/api/admin/contas/' + id, { method: 'PUT', body: JSON.stringify({ ativo }) });
+    toast('Conta ' + (ativo ? 'ativada' : 'desativada') + '.', 'success');
+    carregar();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function abrirEdit(titulo, corpoHTML, onSave, msgInicial = '') {
+  $('m_edit_title').textContent = titulo;
+  $('m_edit_corpo').innerHTML = corpoHTML;
+  $('m_edit_msg').className = '';
+  $('m_edit_msg').textContent = msgInicial;
+  $('m_edit_save').onclick = async () => {
+    try { await onSave(); $('mEdit').classList.add('hidden'); await carregar(); }
+    catch (e) { mostrarErro($('m_edit_msg'), e); }
+  };
+  $('mEdit').classList.remove('hidden');
+}
+$('m_edit_cancel').onclick = () => $('mEdit').classList.add('hidden');
+
+function editarConta(id) {
+  const c = DADOS.contas.find((x) => x.id_conta === id);
+  abrirEdit('Editar conta ' + c.login, `
+    <label class="fld">Nome</label><input id="ed_nome" class="form-input" value="${esc(c.nome || '')}" />
+    <label class="fld">Papel</label>
+    <select id="ed_papel" class="form-input">
+      <option value="cliente" ${c.papel === 'cliente' ? 'selected' : ''}>cliente</option>
+      <option value="admin" ${c.papel === 'admin' ? 'selected' : ''}>admin (administrador da plataforma)</option>
+    </select>
+    <p class="muted" style="font-size:.78rem;margin-top:.5rem;">O admin da plataforma cria contas e ve todas as empresas. O cliente so ve as suas.</p>
+  `, async () => {
+    await api('/api/admin/contas/' + id, { method: 'PUT', body: JSON.stringify({
+      nome: $('ed_nome').value,
+      papel: $('ed_papel').value,
+    }) });
+    toast('Conta atualizada.', 'success');
+  });
+}
+
+function editarSenha(id) {
+  const c = DADOS.contas.find((x) => x.id_conta === id);
+  abrirEdit('Redefinir senha de ' + c.login, `
+    <label class="fld">Nova senha</label>
+    <div style="display:flex;gap:.5rem;">
+      <input id="ed_senha" class="form-input" />
+      <button class="btn-ghost" id="ed_gerar" type="button">Gerar</button>
+    </div>
+    <p class="muted" style="font-size:.78rem;margin-top:.5rem;">Minimo 8 caracteres. Comunique a nova senha ao cliente por um canal seguro.</p>
+  `, async () => {
+    await api('/api/admin/contas/' + id + '/senha', { method: 'POST', body: JSON.stringify({ senha: $('ed_senha').value }) });
+    toast('Senha redefinida.', 'success');
+  });
+  $('ed_gerar').onclick = () => { $('ed_senha').value = gerarSenha(); };
+}
+
+function novaEmpresa(idConta) {
+  const c = DADOS.contas.find((x) => x.id_conta === idConta);
+  abrirEdit('Nova empresa para ' + c.login, `
+    <label class="fld">Razao social</label><input id="ne_razao" class="form-input" placeholder="Empresa 2 LTDA" />
+    <div class="row">
+      <div><label class="fld">Nome fantasia</label><input id="ne_nome" class="form-input" /></div>
+      <div><label class="fld">CNPJ</label><input id="ne_cnpj" class="form-input" /></div>
+    </div>
+    <label class="fld">Endereco</label><input id="ne_end" class="form-input" />
+    <div class="row">
+      <div><label class="fld">Responsavel</label><input id="ne_resp" class="form-input" /></div>
+      <div><label class="fld">CPF</label><input id="ne_resp_cpf" class="form-input" /></div>
+    </div>
+    <div class="row">
+      <div><label class="fld">Login da empresa (acesso externo)</label><input id="ne_login" class="form-input" placeholder="empresa2" /></div>
+      <div><label class="fld">Senha da empresa</label><input id="ne_senha" class="form-input" /></div>
+    </div>
+    <p class="muted" style="font-size:.78rem;margin-top:.5rem;">A empresa recebe um schema proprio (tenant_XXXX), isolado das demais.</p>
+  `, async () => {
+    const r = await api('/api/admin/contas/' + idConta + '/empresas', { method: 'POST', body: JSON.stringify({
+      login: $('ne_login').value, senha: $('ne_senha').value,
+      razao_social: $('ne_razao').value, nome_empresa: $('ne_nome').value, cnpj: $('ne_cnpj').value,
+      endereco: $('ne_end').value, responsavel_nome: $('ne_resp').value, responsavel_cpf: $('ne_resp_cpf').value,
+    }) });
+    toast('Empresa criada: ' + r.schema, 'success');
+  });
+}
+
+function editarEmpresa(id) {
+  const e = DADOS.empresas.find((x) => x.id_cliente === id);
+  abrirEdit('Editar empresa ' + (e.schema || ''), `
+    <label class="fld">Razao social</label><input id="ee_razao" class="form-input" value="${esc(e.razao_social || '')}" />
+    <div class="row">
+      <div><label class="fld">Nome fantasia</label><input id="ee_nome" class="form-input" value="${esc(e.nome_empresa || '')}" /></div>
+      <div><label class="fld">CNPJ</label><input id="ee_cnpj" class="form-input" value="${esc(e.cnpj || '')}" /></div>
+    </div>
+    <label class="fld">Endereco</label><input id="ee_end" class="form-input" value="${esc(e.endereco || '')}" />
+    <div class="row">
+      <div><label class="fld">Responsavel</label><input id="ee_resp" class="form-input" value="${esc(e.responsavel_nome || '')}" /></div>
+      <div><label class="fld">CPF</label><input id="ee_resp_cpf" class="form-input" value="${esc(e.responsavel_cpf || '')}" /></div>
+    </div>
+    <p class="muted" style="font-size:.78rem;margin-top:.5rem;">Conta dona: <b>${esc(e.login_conta || '(orfa)')}</b></p>
+  `, async () => {
+    await api('/api/admin/empresas/' + id, { method: 'PUT', body: JSON.stringify({
+      razao_social: $('ee_razao').value, nome_empresa: $('ee_nome').value, cnpj: $('ee_cnpj').value,
+      endereco: $('ee_end').value, responsavel_nome: $('ee_resp').value, responsavel_cpf: $('ee_resp_cpf').value,
+    }) });
+    toast('Empresa atualizada.', 'success');
+  });
+}
+
+// ---------- nova conta ----------
+$('btn_nova').onclick = () => {
+  $('mConta').classList.remove('hidden');
+  $('m_conta_msg').className = '';
+  $('m_conta_msg').textContent = '';
+  ['c_login', 'c_nome', 'c_senha', 'e_razao', 'e_nome', 'e_cnpj', 'e_end', 'e_resp', 'e_resp_cpf', 'e_login', 'e_senha']
+    .forEach((k) => { if ($(k)) $(k).value = ''; });
+};
+$('c_cancel').onclick = () => $('mConta').classList.add('hidden');
+$('c_gerar').onclick = () => { $('c_senha').value = gerarSenha(); };
+$('c_com_empresa').onchange = () => {
+  $('c_empresa_bloco').classList.toggle('hidden', !$('c_com_empresa').checked);
+};
+$('c_save').onclick = async () => {
+  const btn = $('c_save');
+  btn.disabled = true;
+  try {
+    const payload = { login: $('c_login').value.trim(), nome: $('c_nome').value.trim(), senha: $('c_senha').value };
+    if ($('c_com_empresa').checked) {
+      payload.empresas = [{
+        login: $('e_login').value.trim(), senha: $('e_senha').value,
+        razao_social: $('e_razao').value.trim(), nome_empresa: $('e_nome').value.trim(),
+        cnpj: $('e_cnpj').value.trim(), endereco: $('e_end').value.trim(),
+        responsavel_nome: $('e_resp').value.trim(), responsavel_cpf: $('e_resp_cpf').value.trim(),
+      }];
+    }
+    const r = await api('/api/admin/contas', { method: 'POST', body: JSON.stringify(payload) });
+    $('mConta').classList.add('hidden');
+    const schemas = (r.empresas || []).map((e) => e.schema).join(', ');
+    toast('Conta "' + r.login + '" criada' + (schemas ? ' (' + schemas + ')' : '') + '.', 'success');
+    carregar();
+  } catch (e) {
+    mostrarErro($('m_conta_msg'), e);
+  } finally { btn.disabled = false; }
+};
+
+// ---------- abas / refresh ----------
+document.querySelectorAll('.tab').forEach((t) => {
+  t.onclick = () => {
+    document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x === t));
+    document.querySelectorAll('section[data-tab]').forEach((s) => s.classList.toggle('hidden', s.dataset.tab !== t.dataset.tab));
+  };
+});
+$('btn_aud').onclick = carregar;
+
+$('brand-ico').innerHTML = ic('shield', 18);
+$('h-contas').innerHTML = ic('users', 16);
+$('h-empresas').innerHTML = ic('building', 16);
+$('h-aud').innerHTML = ic('history', 16);
+$('btn_nova').insertAdjacentHTML('afterbegin', ic('plus', 14) + ' ');
+</script>
+</body>
+</html>

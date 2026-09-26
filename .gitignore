@@ -6,3 +6,6 @@ node_modules/
 
 # arquivos AFD importados (volumosos, gerados em runtime)
 data/afd/
+
+# temporarios (testes com stub)
+.tmp-*/

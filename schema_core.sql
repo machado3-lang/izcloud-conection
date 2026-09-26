@@ -10,11 +10,17 @@ CREATE DATABASE IF NOT EXISTS izcloud_core;
 USE izcloud_core;
 
 -- Conta do cliente do iZCloud (login web). Isolada: so enxerga suas empresas.
+-- papel = 'admin'  -> administrador da PLATAFORMA (cria contas, ve todas as
+--                     empresas). Entra em /admin.html.
+-- papel = 'cliente' -> cliente normal: so as suas empresas.
 CREATE TABLE IF NOT EXISTS contas (
   id_conta   INT AUTO_INCREMENT PRIMARY KEY,
   login      VARCHAR(64) NOT NULL UNIQUE,
   senha_hash VARCHAR(255) NOT NULL,          -- "salt:hash" (scrypt)
   nome       VARCHAR(120),
+  papel      ENUM('admin','cliente') NOT NULL DEFAULT 'cliente',
+  ultimo_login DATETIME,
+  criado_por INT,                            -- id_conta do admin que criou
   ativo      BIT DEFAULT 1,
   criado_em  DATETIME
 );
@@ -52,7 +58,22 @@ CREATE TABLE IF NOT EXISTS usuarios (
   KEY idx_cliente (id_cliente)
 );
 
--- MIGRACOES p/ core ja existente (rode no MySQL da nuvem):
+-- Trilha de auditoria do administrador da plataforma. Guarda quem fez o que
+-- (criar conta, desativar, resetar senha, criar empresa).
+CREATE TABLE IF NOT EXISTS admin_auditoria (
+  id         BIGINT AUTO_INCREMENT PRIMARY KEY,
+  id_conta   INT,                            -- admin que executou
+  acao       VARCHAR(40) NOT NULL,           -- conta_criada | conta_alterada | senha_resetada | empresa_criada
+  alvo       VARCHAR(120),                   -- login da conta afetada
+  detalhes   TEXT,
+  ip         VARCHAR(45),
+  criado_em  DATETIME,
+  KEY idx_conta (id_conta),
+  KEY idx_data (criado_em)
+);
+
+-- MIGRACOES p/ core ja existente (rode no MySQL da nuvem, ou deixe o app
+-- aplicar na subida — core.js:aplicarMigracoes() faz isso de forma idempotente):
 -- CREATE TABLE contas ( id_conta INT AUTO_INCREMENT PRIMARY KEY, login VARCHAR(64) NOT NULL UNIQUE,
 --   senha_hash VARCHAR(255) NOT NULL, nome VARCHAR(120), ativo BIT DEFAULT 1, criado_em DATETIME );
 -- ALTER TABLE clientes
