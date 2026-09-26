@@ -791,6 +791,67 @@ GET /api/health/status
 
 ---
 
+## 12.16 "Sua conta não é administradora" no /admin.html (2026-09-26)
+
+**Sintoma:** login funcionava, mas `/admin.html` respondia *"Sua conta nao e
+administradora da plataforma. O acesso a esta tela e restrito ao administrador."*
+
+**Causa:** o bootstrap do admin é feito pela env var
+`IZCLOUD_ADMIN_LOGIN`/`IZCLOUD_ADMIN_SENHA`, que nunca chegou a ser definida na
+Railway. Sem elas, `garantirAdminBootstrap()` retorna sem fazer nada, **nenhuma
+conta fica com `papel='admin'`** e o `authAdmin` recusa todo mundo — com uma
+mensagem que não explicava o motivo.
+
+**Dois bugs no front agravaram a confusão:**
+
+1. **`admin.html` decidia a permissão pelo `localStorage`** (`iz_perfil`). Um
+   `papel` guardado no navegador fica velho quando o papel muda — então uma conta
+   recém-promovida era negada, e uma rebaixada continuaria com acesso na tela.
+   Agora a tela pergunta ao servidor (`GET /api/auth/eu`, que lê o banco) e
+   confirma com a própria rota do painel antes de avisar.
+2. **Não existia caminho para criar admin sem redeploy.** Com as env vars
+   ausentes, só restava reiniciar o serviço depois de configurar tudo.
+
+### 12.16.1 Correções
+
+| Item | Onde | O que foi feito |
+|---|---|---|
+| Sem caminho de recuperação | `server.js` | **`POST /api/admin/bootstrap`** (protegido por `IZCLOUD_ADMIN_KEY`): cria **ou promove** a conta admin e **redefine a senha** — sem redeploy. Idempotente |
+| Mensagem inútil | `public/admin.html` | quando não há admin na plataforma, a tela diz isso e mostra como resolver, em vez de "acesso restrito" |
+| Permissão por cache | `public/admin.html`, `public/index.html` | passa a usar `GET /api/auth/eu` (fonte da verdade: o banco). O item "Administração" aparece some/reaparece sem novo login |
+| Diagnóstico | `server.js` | `GET /api/config` devolve `tem_admin: boolean` |
+| Endpoint de perfil | `server.js`/`core.js` | `GET /api/auth/eu` → `{id_conta, login, nome, papel, ativo, ultimo_login, perfil}` |
+
+### 12.16.2 Testes
+
+`.tmp-e2e` — 20 casos e mais 3 de perfil, com **cenário 5** novo:
+
+- **Cenário 5 — nenhum admin existe** (as env vars não foram definidas, que é o
+  estado real de quem não configurou): `tem_admin: false`; bootstrap sem chave
+  → 403; senha fraca → 400; bootstrap com chave cria o admin; rodar de novo
+  **promove sem duplicar** e **redefine a senha**; depois disso o login e
+  `/api/admin/panorama` respondem 200.
+- Rebaixar/promover uma conta reflete imediatamente em `/api/auth/eu`, **sem
+  precisar de novo login**.
+
+Total: 20 + 16 + 47 asserções, 3 suítes, 5 cenários, todas passando.
+
+### 12.16.3 Como destravar agora (sem esperar deploy)
+
+Com o deploy deste commit:
+
+```bash
+curl -X POST https://izcloud-conection-production.up.railway.app/api/admin/bootstrap \
+  -H "x-admin-key: c7f53a5f7a48d68b5b82e1403cf879ac957e6fdf10df8f17e5fd59be38e6e2d0" \
+  -H "Content-Type: application/json" \
+  -d '{"login":"admin","senha":"<senha forte de 8+>","nome":"Antonio"}'
+```
+
+Depois entre em `/admin.html` com esse login. **Rode isto depois de trocar o
+`IZCLOUD_ADMIN_KEY`** — a chave acima é o placeholder do README.
+
+---
+
 ## 13. Deploy no Railway (definido)
 
 Decisão: subir no **Railway** a partir deste repo GitHub (Oracle Cloud Free foi

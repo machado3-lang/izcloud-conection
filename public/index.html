@@ -573,7 +573,26 @@ function applyAuth() {
     showPane('reps');
     renderEmpresaBar();
     if (temEmpresa()) { loadReps(); carregarVinculo(); if (podeGerenciar()) loadUsuarios(); }
+    atualizarPerfil(); // papel pode ter mudado desde o ultimo login
   }
+}
+
+// Recarrega o perfil do dono do token direto do banco. Sem isso, o item
+// "Administração" e a lista de empresas ficariam presos ao que estava no
+// localStorage — que nao muda quando o admin promove/rebaixa a conta.
+async function atualizarPerfil() {
+  if (!TOKEN) return;
+  try {
+    const r = await fetch(API + '/api/auth/eu', { headers: { Authorization: 'Bearer ' + TOKEN } });
+    if (r.status === 401) return logout();
+    if (!r.ok) return;
+    const c = await r.json();
+    PERFIL = c.perfil || {};
+    if (c.nome) NOME = c.nome;
+    localStorage.setItem('iz_perfil', JSON.stringify(PERFIL));
+    localStorage.setItem('iz_nome', NOME);
+    $('nav_admin').classList.toggle('hidden', !(PERFIL.tipo === 'conta' && PERFIL.papel === 'admin'));
+  } catch { /* offline: mantem o que esta em cache */ }
 }
 $('nav_admin').onclick = () => { location.href = '/admin.html'; };
 function logout() {

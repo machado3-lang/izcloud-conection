@@ -325,15 +325,54 @@ function semAcesso(msg) {
   $('whoami').textContent = '';
 }
 
-if (!TOKEN) {
-  semAcesso('Faca login no painel para acessar a administracao.');
-} else if (PERFIL.tipo !== 'conta' || PERFIL.papel !== 'admin') {
-  semAcesso('Sua conta nao e administradora da plataforma. O acesso a esta tela e restrito ao administrador.');
-} else {
-  $('conteudo').classList.remove('hidden');
-  $('whoami').textContent = (localStorage.getItem('iz_nome') || 'Administrador') + ' · admin';
-  carregar();
-}
+// A permissao NAO vem do localStorage: quem decide e o servidor. O `iz_perfil`
+// guardado no navegador fica velho quando o papel muda (ou quando o papel
+// acabou de existir), e o resultado era negar acesso a um admin legitimo — ou
+// liberar a tela para quem ja nao e mais admin.
+(async () => {
+  if (!TOKEN) {
+    semAcesso('Faca login no painel para acessar a administracao.');
+    return;
+  }
+  try {
+    // 1) perfil fresco do servidor
+    const eu = await fetch(API + '/api/auth/eu', { headers: { Authorization: 'Bearer ' + TOKEN } });
+    if (eu.status === 401) {
+      semAcesso('Sua sessao expirou. Entre novamente no painel.');
+      return;
+    }
+    if (!eu.ok) throw new Error('Falha ao consultar o perfil da conta');
+    const conta = await eu.json();
+    PERFIL = conta.perfil || {};
+    localStorage.setItem('iz_perfil', JSON.stringify(PERFIL));
+    if (conta.nome) localStorage.setItem('iz_nome', conta.nome);
+
+    if (PERFIL.papel !== 'admin') {
+      // 2) confirma com a propria rota do painel antes de avisar
+      const teste = await fetch(API + '/api/admin/panorama', { headers: { Authorization: 'Bearer ' + TOKEN } });
+      if (teste.status === 403) {
+        let dica = '';
+        try {
+          const cfg = await (await fetch(API + '/api/config')).json();
+          if (cfg.tem_admin === false) {
+            dica = ' Nenhuma conta de administrador existe na plataforma ainda — ' +
+              'o administrador da infraestrutura precisa criar uma (POST /api/admin/bootstrap ' +
+              'com a IZCLOUD_ADMIN_KEY, ou as env vars IZCLOUD_ADMIN_LOGIN/IZCLOUD_ADMIN_SENHA).';
+          }
+        } catch { /* offline */ }
+        semAcesso('Sua conta "' + (conta.login || '') + '" nao e administradora da plataforma.' + dica);
+        return;
+      }
+      if (!teste.ok) throw new Error('Falha ao consultar o painel (HTTP ' + teste.status + ')');
+    }
+
+    $('conteudo').classList.remove('hidden');
+    $('whoami').textContent = (conta.nome || conta.login || 'Administrador') + ' · admin';
+    carregar();
+  } catch (e) {
+    semAcesso(e.message);
+  }
+})();
 
 // ---------- dados ----------
 async function carregar() {

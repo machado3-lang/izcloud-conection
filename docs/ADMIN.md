@@ -5,11 +5,18 @@
 > fallback por `curl`; a seção 3 descreve o que foi construído.
 >
 > ```bash
-> # 1. defina na Railway (o app cria/promove a conta no boot)
+> # opcao A: por env var (so no boot; a Railway precisa reiniciar)
 > IZCLOUD_ADMIN_LOGIN=admin
 > IZCLOUD_ADMIN_SENHA=<senha forte de 8+>
-> # 2. redeploy e entre em https://<seu-dominio>/admin.html
+>
+> # opcao B: por HTTP, sem redeploy (use se as env vars nao existem)
+> curl -X POST https://<dominio>/api/admin/bootstrap \
+>   -H "x-admin-key: $IZCLOUD_ADMIN_KEY" -H "Content-Type: application/json" \
+>   -d '{"login":"admin","senha":"<forte>","nome":"Antonio"}'
 > ```
+>
+> **Sem nenhuma das duas, o painel não abre** — e a tela avisa isso
+> explicitamente, porque `GET /api/config` devolve `tem_admin: false`.
 
 ---
 
@@ -47,10 +54,21 @@ O painel é o caminho normal. Se algo impedir o acesso a ele, use a
 
 | Método | Rota | Para que serve |
 |---|---|---|
-| POST | `/api/auth/registro` | cria conta (+ 1ª empresa) |
+| POST | `/api/admin/bootstrap` | **cria/promove um admin sem redeploy** (recuperação) |
+| POST | `/api/auth/registro` | cria conta de cliente (+ 1ª empresa) |
 | POST | `/api/auth/register` | cria empresa para um `id_conta` existente |
 | GET | `/api/auth/clientes` | lista todas as empresas da plataforma |
 | GET | `/api/health/db` | diagnóstico completo do MySQL |
+
+### 2.0 Não entra no painel? Checklist
+
+1. `GET /api/config` → `"tem_admin": false`? **Não existe admin na plataforma.**
+   Crie um com `POST /api/admin/bootstrap` (bloco no topo) ou defina
+   `IZCLOUD_ADMIN_LOGIN`/`IZCLOUD_ADMIN_SENHA` e reinicie o serviço.
+2. `tem_admin: true` mas a tela nega? A permissão é decidida pelo **servidor**
+   (`GET /api/auth/eu`), nunca pelo navegador. Saia e entre de novo para renovar
+   o token — a tela já busca o perfil do banco a cada abertura.
+3. `401` em `/api/admin/panorama`? Token expirou (12 h). Entre de novo.
 
 ### 2.1 Criar a conta do cliente (e a 1ª empresa)
 
@@ -96,7 +114,8 @@ curl -X POST https://izcloud-conection-production.up.railway.app/api/auth/usuari
 |---|---|---|
 | GET | `/api/health` | `{"status":"ok"}` — usado pelo healthcheck da Railway |
 | GET | `/api/health/status` | `{ok, tabela_contas, colunas_ok, faltando, tabelas_faltando, erro}` — o MySQL responde? O esquema está em dia? |
-| GET | `/api/config` | `{signup_aberta}` — a UI usa para esconder o cadastro |
+| GET | `/api/config` | `{signup_aberta, tem_admin}` — a UI esconde o cadastro e avisa se falta admin |
+| GET | `/api/auth/eu` | perfil da conta do token, **lido do banco** (fonte da verdade do `papel`) |
 
 > **`faltando` / `tabelas_faltando` são o diagnóstico mais útil quando o login
 > quebra.** Se `colunas_ok` ou `tabelas_faltando` estiverem ruins, o login
@@ -197,7 +216,7 @@ Docker):
 |---|---|
 | `.tmp-authtest/test.mjs` | o bypass de login, rate limit, validações, token forjado |
 | `.tmp-admintest/test.mjs` | `authAdmin`: quem entra, quem não, efeito imediato do rebaixamento |
-| `.tmp-e2e/test.mjs` | **o app real contra um driver MySQL falso**: bootstrap, criar conta + empresa, isolamento cliente/admin, validações, reset de senha, desativar, proteção do último admin, auditoria, telas |
+| `.tmp-e2e/test.mjs` | **o app real contra um driver MySQL falso**: bootstrap, criar conta + empresa, isolamento cliente/admin, validações, reset de senha, desativar, proteção do último admin, auditoria, telas, recuperação sem admin |
 
 ```bash
 Copy-Item auth.js .tmp-authtest\auth.js -Force; node .tmp-authtest\test.mjs
@@ -216,8 +235,9 @@ node .tmp-e2e\test.mjs
 - [ ] `JWT_SECRET` e `IZCLOUD_ADMIN_KEY` com 32+ caracteres, diferentes dos
       exemplos do README. O app acusa no log (`[auth] CRITICO`) se não estiver.
 - [ ] `IZCLOUD_SIGNUP_ABERTA=false`.
-- [ ] `IZCLOUD_ADMIN_LOGIN` / `IZCLOUD_ADMIN_SENHA` definidos, e a senha do
-      admin trocada depois do primeiro acesso.
+- [ ] `IZCLOUD_ADMIN_LOGIN` / `IZCLOUD_ADMIN_SENHA` definidos, **ou** a conta de
+      admin já criada via `POST /api/admin/bootstrap`.
+- [ ] `GET /api/config` → `"tem_admin": true`.
 - [ ] `GET /api/health/status` → `ok: true`, `colunas_ok: true`, `faltando: []`
       **e `tabelas_faltando: []`**.
 - [ ] `GET /api/health/db` responde 401/403 sem `x-admin-key`.

@@ -10,7 +10,7 @@ import { probe, enviarUsuarios, lerUsuarios, mapearUsuario } from './repClient.j
 import { IdCloudClient } from './idcloud.js';
 import { gerarPorPeriodo } from './afd.js';
 import { sincronizarAfd, iniciarPoller } from './sync.js';
-import { getCorePool, getTenantPool, verificarConexaoCore, inicializarCore, criarCliente, listarClientes, criarUsuario, listarUsuarios, removerUsuario, criarConta, verificarConta, listarEmpresas, criarEmpresa, atualizarEmpresa, listarContas, atualizarConta, resetarSenhaConta, listarTodasEmpresas, atualizarEmpresaAdmin, auditar, listarAuditoria } from './core.js';
+import { getCorePool, getTenantPool, verificarConexaoCore, inicializarCore, criarCliente, listarClientes, criarUsuario, listarUsuarios, removerUsuario, criarConta, verificarConta, buscarConta, existeAdmin, listarEmpresas, criarEmpresa, atualizarEmpresa, listarContas, atualizarConta, resetarSenhaConta, listarTodasEmpresas, atualizarEmpresaAdmin, auditar, listarAuditoria } from './core.js';
 import { login, authTenant, authConta, authAdmin, requireAdmin, requireTenantAdmin, limiteTentativas, validarLogin, validarSenha } from './auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -60,7 +60,11 @@ app.get('/', (_, res) => {
 app.get('/api/health', (_, res) => res.json({ status: 'ok', service: 'iZCloud', multiTenant: true }));
 
 // Config publica consumida pela UI (ex.: esconder o formulario de cadastro).
-app.get('/api/config', (_, res) => res.json({ signup_aberta: SIGNUP_ABERTA }));
+// `tem_admin` responde so sim/nao: sem nenhum admin na plataforma, ninguem pode
+// entrar em /admin.html e o operador precisa saber disso.
+app.get('/api/config', async (_, res) => {
+  res.json({ signup_aberta: SIGNUP_ABERTA, tem_admin: await existeAdmin() });
+});
 
 // Diagnostico de banco. Detalhes de conexao (host/porta) so para quem tem a
 // IZCLOUD_ADMIN_KEY — o endpoint e publico, entao nao pode vazar a topologia
@@ -142,6 +146,17 @@ app.post('/api/auth/registro', cadastroLiberado, limiteTentativas('registro'), a
 });
 
 // ---------- Empresas (escopo da CONTA) ----------
+// Perfil do dono do token, lido do BANCO (nao do JWT e nao do localStorage):
+// e a fonte da verdade para o front decidir o que mostrar. Sem isso, uma conta
+// promovida a admin so apareceria como admin depois de um novo login.
+app.get('/api/auth/eu', authConta, async (req, res) => {
+  try {
+    const c = await buscarConta(req.conta.id_conta);
+    if (!c) return res.status(403).json({ error: 'Conta nao encontrada' });
+    res.json({ ...c, perfil: { tipo: 'conta', papel: c.papel } });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
 app.use('/api/empresas', authConta);
 
 app.get('/api/empresas', async (req, res) => {
@@ -162,6 +177,41 @@ app.put('/api/empresas/:id', async (req, res) => {
   try {
     await atualizarEmpresa(req.conta.id_conta, Number(req.params.id), req.body);
     res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Cria (ou promove) a conta de administrador da plataforma. Caminho de
+// recuperacao quando IZCLOUD_ADMIN_LOGIN/IZCLOUD_ADMIN_SENHA nao foram
+// definidos na Railway: nao exige redeploy, so a IZCLOUD_ADMIN_KEY.
+//
+//   curl -X POST .../api/admin/bootstrap -H "x-admin-key: $IZCLOUD_ADMIN_KEY" \
+//        -H "Content-Type: application/json" \
+//        -d '{"login":"admin","senha":"<forte>","nome":"Antonio"}'
+app.post('/api/admin/bootstrap', requireAdmin, async (req, res) => {
+  try {
+    const { login: loginU, senha, nome } = req.body;
+    if (!loginU || !senha) throw new Error('Informe login e senha');
+    validarLogin(loginU);
+    validarSenha(senha);
+    const core = getCorePool();
+    const [ex] = await core.query('SELECT id_conta, papel FROM contas WHERE login = ?', [loginU]);
+    let id_conta, acao;
+    if (ex.length) {
+      id_conta = ex[0].id_conta;
+      await core.query("UPDATE contas SET papel = 'admin', ativo = 1 WHERE id_conta = ?", [id_conta]);
+      // A senha TAMBEM e trocada: esta rota existe para recuperar o acesso, e
+      // nao serviria de nada se so devolvesse "acesso negado" na senha nova.
+      await resetarSenhaConta(id_conta, senha);
+      if (nome) await core.query('UPDATE contas SET nome = ? WHERE id_conta = ?', [nome, id_conta]);
+      acao = 'promovida';
+    } else {
+      const c = await criarConta({ login: loginU, senha, nome, papel: 'admin' });
+      id_conta = c.id_conta;
+      acao = 'criada';
+    }
+    await auditar({ id_conta, acao: 'admin_bootstrap', alvo: loginU, detalhes: `conta ${acao} como admin; senha redefinida`, ip: req.ip });
+    console.log(`[bootstrap] conta admin "${loginU}" ${acao} via /api/admin/bootstrap (id ${id_conta})`);
+    res.json({ ok: true, id_conta, login: loginU, papel: 'admin', acao, senha_redefinida: true });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 

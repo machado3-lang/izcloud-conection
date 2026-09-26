@@ -312,6 +312,38 @@ export async function registrarLogin(id_conta) {
   }
 }
 
+// Perfil da conta a partir do id do token. Usado por GET /api/auth/eu: o front
+// nao pode decidir permissao a partir de um 'papel' guardado no localStorage,
+// que fica velho quando o papel muda (ou quando o deploy introduziu o campo).
+export async function buscarConta(id_conta) {
+  const core = getCorePool();
+  const [rows] = await core.query(
+    'SELECT id_conta, login, nome, papel, ativo, criado_em, ultimo_login FROM contas WHERE id_conta = ?',
+    [id_conta]
+  );
+  if (!rows.length) return null;
+  const c = rows[0];
+  return {
+    id_conta: c.id_conta, login: c.login, nome: c.nome,
+    papel: c.papel || 'cliente', ativo: !!c.ativo,
+    criado_em: c.criado_em, ultimo_login: c.ultimo_login,
+  };
+}
+
+// Existe alguma conta de administrador na plataforma? Responde so sim/nao —
+// nao diz quem e. Usado no diagnostico publico para orientar quem nao consegue
+// entrar no painel de administracao.
+export async function existeAdmin() {
+  try {
+    const core = getCorePool();
+    const [r] = await core.query("SELECT COUNT(*) AS n FROM contas WHERE papel = 'admin' AND ativo = 1");
+    return Number(r[0].n) > 0;
+  } catch (e) {
+    console.error('[core] falha ao contar admins:', e.message);
+    return null;
+  }
+}
+
 export async function listarEmpresas(id_conta) {
   const core = getCorePool();
   const [rows] = await core.query(
