@@ -723,49 +723,71 @@ Detalhes e desenho completo em [`docs/ADMIN.md`](docs/ADMIN.md).
 indisponivel. Tente novamente."}` — não 401. (E `GET /api/auth/login` no
 navegador dá `Cannot GET`, que é normal: a rota só aceita POST.)
 
-**Como achar a causa sem log:** o 503 só é devolvido quando `login()` lança
-exceção — senha errada dá 401. A única coluna nova no caminho do login é
-`contas.papel`, então a hipótese mais provável era a migração não ter rodado.
+### 12.15.1 Causa raiz
 
-**Armadilha que causaria isso (e foi corrigida):** em `inicializarCore()`, o DDL
-de `schema_core.sql` roda antes das migrações. Se qualquer `CREATE TABLE`
-lançasse exceção, a função abortava **antes** de `aplicarMigracoes()`, o app
-subia sem `contas.papel` e todo login quebrava com `ER_BAD_FIELD_ERROR` — sem
-nenhum aviso além do 503.
+Um **ponto e vírgula dentro de um comentário** no `schema_core.sql`:
 
-### 12.15.1 Correções
+```sql
+-- A conta da empresa (contas) e o admin; aqui ficam os operadores adicionais.
+CREATE TABLE IF NOT EXISTS usuarios ( ... );
+```
+
+O parser fazia `sql.split(';')` **antes** de remover os comentários. O `;` da
+linha de comentário cortava o arquivo no meio, e o pedaço que sobrava era
+colado no `CREATE`:
+
+```sql
+aqui ficam os operadores adicionais. CREATE TABLE IF NOT EXISTS usuarios (...)
+```
+
+Isso é SQL inválido → o MySQL rejeitava → **a tabela `usuarios` nunca era
+criada**. E como `verificarCredenciais()` faz
+`SELECT ... FROM usuarios WHERE login = ?`, **todo** login estourava com
+`ER_NO_SUCH_TABLE` → exceção → 503. Nenhuma senha, nenhuma conta, nada
+funcionava — mas `/api/health` continuava `ok`, o que mascarava o problema.
+
+O mesmo bug atingia `runScript()` (usado na criação do schema de cada
+empresa): `schema_tenant.sql` tem `'-- rep_empurra: ... (exige IP fixo/Cloudflare;'`,
+então **criar empresa também falhava**.
+
+### 12.15.2 Correções
 
 | Item | Onde | O que foi feito |
 |---|---|---|
-| Migração hostage do DDL | `core.js` | `inicializarCore()` captura o erro do DDL e **roda as migrações assim mesmo**; só depois relança o erro |
-| Migração sem retentativa | `core.js` | `aplicarMigracoesComRetry()` — 3 tentativas com espera crescente (MySQL subindo, lock de tabela) e log do erro de cada uma |
-| Diagnóstico cego | `core.js` | `verificarConexaoCore()` agora confere as **colunas** obrigatórias (`COLUNAS_ESPERADAS`) e devolve `colunas_ok` + `faltando: ["contas.papel", ...]` |
-| Log de startup incompleto | `server.js` | `[startup] DB core: OK (COLUNAS FALTANDO: ...)` |
-| Healthcheck incompleto | `server.js` | `GET /api/health/status` passou a expor `colunas_ok` e `faltando` (o host do banco continua só na rota com `x-admin-key`) |
+| Parser de SQL | `core.js` | `sqlStatements()`: remove comentários **antes** do split, e valida que cada comando começa com palavra reservada (`CREATE`/`ALTER`/…), descartando e logando o que sobrar |
+| Schema de empresa | `core.js` | `runScript()` passou a usar o mesmo `sqlStatements()` |
+| DDL em bloco | `core.js` | cada `CREATE` roda independente — um comando com erro não impede os seguintes |
+| Diagnóstico | `core.js` | `verificarConexaoCore()` confere **tabelas** (`contas`, `clientes`, `usuarios`, `admin_auditoria`) e **colunas**, devolvendo `tabelas_faltando` e `faltando` |
+| Healthcheck | `server.js` | `GET /api/health/status` expõe `tabelas_faltando` / `faltando`; o host do banco continua só na rota com `x-admin-key` |
+| Log | `server.js` | `[startup] DB core: OK (TABELAS FALTANDO: usuarios)` |
 
-### 12.15.2 Testes
+### 12.15.3 Testes
 
-Duas scenarios novos no `.tmp-e2e` (além dos 17 casos existentes):
+`.tmp-e2e` ganhou 3 cenários (além dos 17 casos existentes):
 
-- **Cenário 2 — banco desatualizado:** o app recebe um core sem `contas.papel` e
-  `clientes.id_conta`; tem de criar as colunas no boot, registrar no log e
-  **login voltar a dar 200**.
-- **Cenário 3 — DDL do `schema_core.sql` falha:** confirma que a falha é
-  logada com o código do MySQL, que o bootstrap do admin **roda mesmo assim** e
-  que o login continua em 200. Este é exatamente o modo de falha que produzia o
-  503.
+- **Cenário 2 — banco desatualizado:** faltam `contas.papel` e `clientes.id_conta`;
+  o app cria no boot e o login volta a 200.
+- **Cenário 3 — DDL do `schema_core.sql` falha:** a falha é logada com o código do
+  MySQL, o bootstrap do admin roda mesmo assim e o login continua 200.
+- **Cenário 4 — falta a tabela `usuarios`:** o driver falso passa a estourar
+  `ER_NO_SUCH_TABLE` nesse SELECT, como o MySQL real. O app tem de criar a
+  tabela no boot e o login tem de dar 200. **Este é o cenário do bug em
+  produção.**
 
-Total: 20 + 16 + 32 asserções, 3 suítes, todas passando.
+O driver falso também deixou de ser otimista: `SELECT ... FROM usuarios` agora
+lança `ER_NO_SUCH_TABLE` quando a tabela não existe.
 
-### 12.15.3 O que verificar depois do deploy
+Total: 20 + 16 + 35 asserções, 3 suítes, todas passando.
+
+### 12.15.4 O que verificar depois do deploy
 
 ```
 GET /api/health/status
 ```
-- `colunas_ok: true` e `faltando: []` → banco em dia, login deve dar 401 (senha
-  errada) e 200 (senha certa).
-- `faltando: [...]` com colunas → o app tentou corrigir no boot; se ainda
-  assim, veja o log da Railway na linha `[migracao] FALHOU apos 3 tentativas`.
+- `ok: true`, `colunas_ok: true`, `faltando: []`, `tabelas_faltando: []` →
+  esquema completo. Login com senha errada deve dar **401**.
+- Se `tabelas_faltando` vier com algo, o app tentou criar no boot; veja
+  `[startup] DB core: OK (TABELAS FALTANDO: ...)` no log da Railway.
 
 ---
 

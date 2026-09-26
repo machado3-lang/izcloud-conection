@@ -76,7 +76,10 @@ app.get('/api/health/db', requireAdmin, async (_, res) => {
 app.get('/api/health/status', async (_, res) => {
   try {
     const d = await verificarConexaoCore();
-    res.json({ ok: d.ok, tabela_contas: d.tabela_contas, colunas_ok: d.colunas_ok, faltando: d.faltando, erro: d.erro });
+    res.json({
+      ok: d.ok, tabela_contas: d.tabela_contas, colunas_ok: d.colunas_ok,
+      faltando: d.faltando, tabelas_faltando: d.tabelas_faltando, erro: d.erro,
+    });
   } catch (e) { res.status(500).json({ ok: false, erro: e.message }); }
 });
 
@@ -539,7 +542,8 @@ verificarConexaoCore()
     console.log(
       '[startup] DB core:', d.ok ? 'OK' : 'FALHOU', d.erro ? `(${d.erro})` : '',
       d.tabela_contas ? '' : '(tabela contas ausente)',
-      d.colunas_ok ? '' : '(COLUNAS FALTANDO: ' + (d.faltando.join(', ') || 'desconhecido') + ')'
+      d.colunas_ok ? '' : '(COLUNAS FALTANDO: ' + (d.faltando.join(', ') || 'desconhecido') + ')',
+      d.tabelas_faltando.length ? '(TABELAS FALTANDO: ' + d.tabelas_faltando.join(', ') + ')' : ''
     );
   })
   .catch((e) => console.error('[startup] erro ao checar DB:', detalheErro(e)));

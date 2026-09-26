@@ -56,23 +56,35 @@ const COLUNAS_ESPERADAS = {
   clientes: ['id_conta', 'razao_social', 'endereco', 'responsavel_nome', 'responsavel_cpf'],
 };
 
-// Diagnostico: conecta ao core, a tabela `contas` existe e as colunas
-// obrigatorias existem?
+// Tabelas que o app exige. Se `usuarios` faltar, o SELECT do login estoura com
+// ER_NO_SUCH_TABLE e TODO login devolve 503. A ordem de criacao no
+// schema_core.sql importa: um CREATE que falhe nao pode impedir os seguintes.
+const TABELAS_ESPERADAS = ['contas', 'clientes', 'usuarios', 'admin_auditoria'];
+
+// Diagnostico: conecta ao core, as tabelas existem e as colunas obrigatorias
+// existem?
 export async function verificarConexaoCore() {
   const db = process.env.CORE_DB || 'izcloud_core';
   const out = {
     host: cfg().host, port: cfg().port, database: db,
-    ok: false, tabela_contas: false, colunas_ok: false, faltando: [], erro: null,
+    ok: false, tabela_contas: false, colunas_ok: false, faltando: [],
+    tabelas_faltando: [], erro: null,
   };
   try {
     const core = getCorePool();
     await core.query('SELECT 1');
     out.ok = true;
-    const [t] = await core.query("SHOW TABLES LIKE 'contas'");
-    out.tabela_contas = t.length > 0;
+    // information_schema em vez de SHOW TABLES: explicito quanto ao schema.
+    const [ex] = await core.query(
+      'SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?', [db]
+    );
+    const temTabelas = new Set(ex.map((r) => r.TABLE_NAME));
+    out.tabelas_faltando = TABELAS_ESPERADAS.filter((t) => !temTabelas.has(t));
+    out.tabela_contas = temTabelas.has('contas');
+
     if (out.tabela_contas) {
       const [cols] = await core.query(
-        "SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS " +
+        'SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS ' +
         'WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN (?, ?)',
         [db, 'contas', 'clientes']
       );
@@ -88,6 +100,32 @@ export async function verificarConexaoCore() {
   return out;
 }
 
+// Divide um .sql em statements.
+//
+// A ORDEM IMPORTA: os comentarios precisam sair ANTES do split por ';'. Um ';'
+// dentro de um comentario (ex.: "-- A conta e o admin; aqui ficam os operadores")
+// cortava o arquivo no meio da linha e o pedaco que sobrava virava SQL
+// invalido -- que o MySQL rejeita, silenciosamente deixava de criar a tabela, e
+// no caso de `usuarios` isso quebrava TODO login com ER_NO_SUCH_TABLE.
+const VERBAO_SQL = /^(CREATE|ALTER|DROP|INSERT|UPDATE|DELETE|SELECT|SET|USE|RENAME|TRUNCATE)\b/i;
+
+export function sqlStatements(sql) {
+  const semComentarios = sql
+    .split('\n')
+    .filter((l) => !/^\s*(--|#)/.test(l))
+    .filter((l) => !/^\s*(CREATE\s+DATABASE|USE)\b/i.test(l))
+    .join('\n');
+  const statements = semComentarios.split(';').map((s) => s.trim()).filter(Boolean);
+  // Guarda contra o arquivo voltar a ter lixo no meio: antes de enviar, cada
+  // comando precisa comecar com uma palavra reservada.
+  const suspectos = statements.filter((s) => !VERBAO_SQL.test(s));
+  if (suspectos.length) {
+    console.error('[sql] comando invalido (provavelmente sobra de comentario): ' +
+      suspectos.map((s) => s.replace(/\s+/g, ' ').slice(0, 80)).join(' | '));
+  }
+  return statements.filter((s) => VERBAO_SQL.test(s));
+}
+
 // Cria o banco/tabelas do core (idempotente). Conecta SEM database (pois o
 // banco pode nao existir ainda), cria o `izcloud_core` e depois roda o DDL das
 // tabelas na mesma conexao.
@@ -98,19 +136,21 @@ export async function inicializarCore() {
   try {
     await conn.query('CREATE DATABASE IF NOT EXISTS ??', [db]);
     await conn.query('USE ??', [db]);
-    const sql = fs.readFileSync(path.join(__dirname, 'schema_core.sql'), 'utf-8')
-      .split('\n')
-      .filter((l) => !/^\s*(CREATE\s+DATABASE|USE)\b/i.test(l))
-      .join('\n');
-    // Comandos de exemplo commented-out no fim do arquivo NAO podem ir para o
-    // MySQL: sem isso, um bloco de migracao comentada vira statement e o
-    // servidor pode executar algo que ninguem pretendia.
-    const statements = sql
-      .split(';')
-      .map((s) => s.split('\n').filter((l) => !/^\s*(--|#)/.test(l)).join('\n'))
-      .map((s) => s.trim())
-      .filter(Boolean);
-    for (const st of statements) await conn.query(st);
+    const sql = fs.readFileSync(path.join(__dirname, 'schema_core.sql'), 'utf-8');
+    // Cada CREATE roda independente: um unico comando com erro nao pode
+    // impedir os seguintes. Sem isso, um `contas` que falha deixa `usuarios` e
+    // `admin_auditoria` sem criacao — e o login passa a devolver 503 em TODA
+    // tentativa, porque o SELECT de `usuarios` estoura com ER_NO_SUCH_TABLE.
+    const erros = [];
+    for (const st of sqlStatements(sql)) {
+      try {
+        await conn.query(st);
+      } catch (e) {
+        const alvo = st.match(/CREATE\s+(?:TABLE\s+(?:IF NOT EXISTS\s+)?`?(\w+)`?|DATABASE(?:\s+IF NOT EXISTS)?\s+`?(\w+)`?)/i) || [];
+        erros.push(`${alvo[1] || alvo[2] || st.slice(0, 40)}: ${[e.code, e.message].filter(Boolean).join(' | ')}`);
+      }
+    }
+    if (erros.length) ddlErro = new Error(erros.join(' ;; '));
   } catch (e) {
     ddlErro = e;
   } finally {
@@ -230,13 +270,10 @@ function custoFixo() {
 }
 
 // ---- Scripts SQL (criacao de schema de tenant) ----
+// Usa o mesmo sqlStatements() do core: Comentario com ';' no meio quebra o
+// schema da empresa do mesmo jeito que quebrava o core.
 async function runScript(pool, sql) {
-  const statements = sql
-    .split(';')
-    .map((s) => s.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n'))
-    .map((s) => s.trim())
-    .filter(Boolean);
-  for (const st of statements) {
+  for (const st of sqlStatements(sql)) {
     await pool.query(st);
   }
 }

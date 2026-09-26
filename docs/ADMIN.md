@@ -95,14 +95,15 @@ curl -X POST https://izcloud-conection-production.up.railway.app/api/auth/usuari
 | Método | Rota | O que devolve |
 |---|---|---|
 | GET | `/api/health` | `{"status":"ok"}` — usado pelo healthcheck da Railway |
-| GET | `/api/health/status` | `{ok, tabela_contas, colunas_ok, faltando, erro}` — o MySQL responde? O esquema está em dia? |
+| GET | `/api/health/status` | `{ok, tabela_contas, colunas_ok, faltando, tabelas_faltando, erro}` — o MySQL responde? O esquema está em dia? |
 | GET | `/api/config` | `{signup_aberta}` — a UI usa para esconder o cadastro |
 
-> **`faltando` é o diagnóstico mais útil em caso de login quebrado.** Se
-> `colunas_ok` for `false`, a lista mostra exatamente quais colunas faltam —
-> o app cria sozinho no boot seguinte, mas enquanto não criar, o login responde
-> **503** (o `SELECT` na coluna inexistente estoura `ER_BAD_FIELD_ERROR`).
-> Erro de senha de verdade responde **401**.
+> **`faltando` / `tabelas_faltando` são o diagnóstico mais útil quando o login
+> quebra.** Se `colunas_ok` ou `tabelas_faltando` estiverem ruins, o login
+> responde **503** (o `SELECT` estoura `ER_BAD_FIELD_ERROR` ou
+> `ER_NO_SUCH_TABLE`). Erro de senha de verdade responde **401**.
+> O app recria o que falta no boot seguinte; se não conseguir, o log da Railway
+> mostra `[migracao] FALHOU apos 3 tentativas`.
 
 ---
 
@@ -217,8 +218,8 @@ node .tmp-e2e\test.mjs
 - [ ] `IZCLOUD_SIGNUP_ABERTA=false`.
 - [ ] `IZCLOUD_ADMIN_LOGIN` / `IZCLOUD_ADMIN_SENHA` definidos, e a senha do
       admin trocada depois do primeiro acesso.
-- [ ] `GET /api/health/status` → `ok: true` **e `colunas_ok: true`** (com
-      `faltando: []`).
+- [ ] `GET /api/health/status` → `ok: true`, `colunas_ok: true`, `faltando: []`
+      **e `tabelas_faltando: []`**.
 - [ ] `GET /api/health/db` responde 401/403 sem `x-admin-key`.
 - [ ] `POST /api/auth/registro` responde 403 sem `x-admin-key`.
 - [ ] `POST /api/auth/login` com senha errada responde **401**, nunca 200.
