@@ -70,11 +70,13 @@ app.get('/api/health/db', requireAdmin, async (_, res) => {
   catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
-// Mesmo diagnostico, versao publica e sem dados sensiveis.
+// Mesmo diagnostico, versao publica e sem dados sensiveis. `faltando` lista as
+// colunas obrigatorias que ainda nao existem no core — e o que explica um
+// login respondendo 503.
 app.get('/api/health/status', async (_, res) => {
   try {
     const d = await verificarConexaoCore();
-    res.json({ ok: d.ok, tabela_contas: d.tabela_contas, erro: d.erro });
+    res.json({ ok: d.ok, tabela_contas: d.tabela_contas, colunas_ok: d.colunas_ok, faltando: d.faltando, erro: d.erro });
   } catch (e) { res.status(500).json({ ok: false, erro: e.message }); }
 });
 
@@ -533,7 +535,13 @@ inicializarCore()
 
 // Verificacao de banco (aparece nos logs da Railway para facilitar debug)
 verificarConexaoCore()
-  .then((d) => console.log('[startup] DB core:', d.ok ? 'OK' : 'FALHOU', d.erro ? `(${d.erro})` : '', d.tabela_contas ? '' : '(tabela contas ausente)'))
+  .then((d) => {
+    console.log(
+      '[startup] DB core:', d.ok ? 'OK' : 'FALHOU', d.erro ? `(${d.erro})` : '',
+      d.tabela_contas ? '' : '(tabela contas ausente)',
+      d.colunas_ok ? '' : '(COLUNAS FALTANDO: ' + (d.faltando.join(', ') || 'desconhecido') + ')'
+    );
+  })
   .catch((e) => console.error('[startup] erro ao checar DB:', detalheErro(e)));
 
 app.listen(PORT, () => console.log(`iZCloud (multi-tenant) rodando em http://localhost:${PORT}`));

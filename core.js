@@ -48,15 +48,40 @@ export function getTenantPool(schemaName) {
   return _tenants.get(schemaName);
 }
 
-// Diagnostico: consegue conectar ao core e a tabela `contas` existe?
+// Colunas que o app exige em producao. Se faltar alguma, o login quebra com
+// ER_BAD_FIELD_ERROR — por isso `verificarConexaoCore` reporta e a migracao
+// insiste ate resolver.
+const COLUNAS_ESPERADAS = {
+  contas: ['papel', 'ultimo_login', 'criado_por'],
+  clientes: ['id_conta', 'razao_social', 'endereco', 'responsavel_nome', 'responsavel_cpf'],
+};
+
+// Diagnostico: conecta ao core, a tabela `contas` existe e as colunas
+// obrigatorias existem?
 export async function verificarConexaoCore() {
-  const out = { host: cfg().host, port: cfg().port, database: process.env.CORE_DB || 'izcloud_core', ok: false, tabela_contas: false, erro: null };
+  const db = process.env.CORE_DB || 'izcloud_core';
+  const out = {
+    host: cfg().host, port: cfg().port, database: db,
+    ok: false, tabela_contas: false, colunas_ok: false, faltando: [], erro: null,
+  };
   try {
     const core = getCorePool();
     await core.query('SELECT 1');
     out.ok = true;
     const [t] = await core.query("SHOW TABLES LIKE 'contas'");
     out.tabela_contas = t.length > 0;
+    if (out.tabela_contas) {
+      const [cols] = await core.query(
+        "SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS " +
+        'WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN (?, ?)',
+        [db, 'contas', 'clientes']
+      );
+      const tem = new Set(cols.map((r) => r.TABLE_NAME + '.' + r.COLUMN_NAME));
+      for (const [tabela, lista] of Object.entries(COLUNAS_ESPERADAS)) {
+        for (const col of lista) if (!tem.has(tabela + '.' + col)) out.faltando.push(tabela + '.' + col);
+      }
+      out.colunas_ok = out.faltando.length === 0;
+    }
   } catch (e) {
     out.erro = e.message;
   }
@@ -69,6 +94,7 @@ export async function verificarConexaoCore() {
 export async function inicializarCore() {
   const db = process.env.CORE_DB || 'izcloud_core';
   const conn = await mysql.createConnection({ ...cfg() });
+  let ddlErro = null;
   try {
     await conn.query('CREATE DATABASE IF NOT EXISTS ??', [db]);
     await conn.query('USE ??', [db]);
@@ -85,12 +111,42 @@ export async function inicializarCore() {
       .map((s) => s.trim())
       .filter(Boolean);
     for (const st of statements) await conn.query(st);
+  } catch (e) {
+    ddlErro = e;
   } finally {
     await conn.end();
   }
-  await aplicarMigracoes();
+
+  // As migracoes rodam MESMO que o DDL tenha falhado: sao elas que garantem
+  // as colunas que o login usa (contas.papel). Se nao rodarem, todo login
+  // quebra com ER_BAD_FIELD_ERROR — e o painel fica inutilizavel sem aviso.
+  await aplicarMigracoesComRetry();
   await garantirAdminBootstrap();
+
+  if (ddlErro) throw ddlErro;
   return true;
+}
+
+// Insiste: uma migracao que falha na primeira tentativa (MySQL ainda subindo,
+// lock de tabela) nao pode deixar o app sem colunas.
+export async function aplicarMigracoesComRetry(tentativas = 3) {
+  for (let i = 1; i <= tentativas; i++) {
+    try {
+      await aplicarMigracoes();
+      return true;
+    } catch (e) {
+      const erro = [e.code, e.errno, e.sqlMessage, e.message].filter(Boolean).join(' | ') || String(e);
+      console.error(`[migracao] tentativa ${i}/${tentativas} falhou: ${erro}`);
+      if (i < tentativas) await new Promise((r) => setTimeout(r, 2000 * i));
+    }
+  }
+  const d = await verificarConexaoCore();
+  console.error(
+    '[migracao] FALHOU apos ' + tentativas + ' tentativas. Colunas faltando: ' +
+    (d.faltando.length ? d.faltando.join(', ') : '(nenhuma — o problema e outro)') +
+    '. O login vai falhar ate isso ser resolvido.'
+  );
+  return false;
 }
 
 // MySQL nao aceita `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` (isso e do

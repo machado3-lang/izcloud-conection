@@ -717,6 +717,58 @@ Detalhes e desenho completo em [`docs/ADMIN.md`](docs/ADMIN.md).
 
 ---
 
+## 12.15 Login respondendo 503 na Railway (2026-09-26)
+
+**Sintoma:** `POST /api/auth/login` devolvia **503** `{"error":"Servico
+indisponivel. Tente novamente."}` — não 401. (E `GET /api/auth/login` no
+navegador dá `Cannot GET`, que é normal: a rota só aceita POST.)
+
+**Como achar a causa sem log:** o 503 só é devolvido quando `login()` lança
+exceção — senha errada dá 401. A única coluna nova no caminho do login é
+`contas.papel`, então a hipótese mais provável era a migração não ter rodado.
+
+**Armadilha que causaria isso (e foi corrigida):** em `inicializarCore()`, o DDL
+de `schema_core.sql` roda antes das migrações. Se qualquer `CREATE TABLE`
+lançasse exceção, a função abortava **antes** de `aplicarMigracoes()`, o app
+subia sem `contas.papel` e todo login quebrava com `ER_BAD_FIELD_ERROR` — sem
+nenhum aviso além do 503.
+
+### 12.15.1 Correções
+
+| Item | Onde | O que foi feito |
+|---|---|---|
+| Migração hostage do DDL | `core.js` | `inicializarCore()` captura o erro do DDL e **roda as migrações assim mesmo**; só depois relança o erro |
+| Migração sem retentativa | `core.js` | `aplicarMigracoesComRetry()` — 3 tentativas com espera crescente (MySQL subindo, lock de tabela) e log do erro de cada uma |
+| Diagnóstico cego | `core.js` | `verificarConexaoCore()` agora confere as **colunas** obrigatórias (`COLUNAS_ESPERADAS`) e devolve `colunas_ok` + `faltando: ["contas.papel", ...]` |
+| Log de startup incompleto | `server.js` | `[startup] DB core: OK (COLUNAS FALTANDO: ...)` |
+| Healthcheck incompleto | `server.js` | `GET /api/health/status` passou a expor `colunas_ok` e `faltando` (o host do banco continua só na rota com `x-admin-key`) |
+
+### 12.15.2 Testes
+
+Duas scenarios novos no `.tmp-e2e` (além dos 17 casos existentes):
+
+- **Cenário 2 — banco desatualizado:** o app recebe um core sem `contas.papel` e
+  `clientes.id_conta`; tem de criar as colunas no boot, registrar no log e
+  **login voltar a dar 200**.
+- **Cenário 3 — DDL do `schema_core.sql` falha:** confirma que a falha é
+  logada com o código do MySQL, que o bootstrap do admin **roda mesmo assim** e
+  que o login continua em 200. Este é exatamente o modo de falha que produzia o
+  503.
+
+Total: 20 + 16 + 32 asserções, 3 suítes, todas passando.
+
+### 12.15.3 O que verificar depois do deploy
+
+```
+GET /api/health/status
+```
+- `colunas_ok: true` e `faltando: []` → banco em dia, login deve dar 401 (senha
+  errada) e 200 (senha certa).
+- `faltando: [...]` com colunas → o app tentou corrigir no boot; se ainda
+  assim, veja o log da Railway na linha `[migracao] FALHOU apos 3 tentativas`.
+
+---
+
 ## 13. Deploy no Railway (definido)
 
 Decisão: subir no **Railway** a partir deste repo GitHub (Oracle Cloud Free foi

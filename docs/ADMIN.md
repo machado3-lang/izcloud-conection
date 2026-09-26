@@ -95,8 +95,14 @@ curl -X POST https://izcloud-conection-production.up.railway.app/api/auth/usuari
 | Método | Rota | O que devolve |
 |---|---|---|
 | GET | `/api/health` | `{"status":"ok"}` — usado pelo healthcheck da Railway |
-| GET | `/api/health/status` | `{ok, tabela_contas, erro}` — o MySQL responde? |
+| GET | `/api/health/status` | `{ok, tabela_contas, colunas_ok, faltando, erro}` — o MySQL responde? O esquema está em dia? |
 | GET | `/api/config` | `{signup_aberta}` — a UI usa para esconder o cadastro |
+
+> **`faltando` é o diagnóstico mais útil em caso de login quebrado.** Se
+> `colunas_ok` for `false`, a lista mostra exatamente quais colunas faltam —
+> o app cria sozinho no boot seguinte, mas enquanto não criar, o login responde
+> **503** (o `SELECT` na coluna inexistente estoura `ER_BAD_FIELD_ERROR`).
+> Erro de senha de verdade responde **401**.
 
 ---
 
@@ -211,7 +217,8 @@ node .tmp-e2e\test.mjs
 - [ ] `IZCLOUD_SIGNUP_ABERTA=false`.
 - [ ] `IZCLOUD_ADMIN_LOGIN` / `IZCLOUD_ADMIN_SENHA` definidos, e a senha do
       admin trocada depois do primeiro acesso.
-- [ ] `GET /api/health/status` → `ok: true`.
+- [ ] `GET /api/health/status` → `ok: true` **e `colunas_ok: true`** (com
+      `faltando: []`).
 - [ ] `GET /api/health/db` responde 401/403 sem `x-admin-key`.
 - [ ] `POST /api/auth/registro` responde 403 sem `x-admin-key`.
 - [ ] `POST /api/auth/login` com senha errada responde **401**, nunca 200.
