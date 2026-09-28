@@ -189,4 +189,151 @@ export class IdCloudClient {
     });
     return m;
   }
+
+  // ===================================================================
+  // METRICAS DO PAINEL
+  // Tudo em uma transacao logica so, sobre as tabelas que ja existem.
+  // Sem dado de AFD no banco (nunca sincronizou) os cards mostram 0 em vez de
+  // erro — a UI decide o que fazer com isso.
+  // ===================================================================
+
+  // 'YYYY-MM-DD HH:00:00' para uma data local. O MySQL guarda DATETIME sem fuso,
+  // entao o corte do dia tem de ser montado aqui, no mesmo fuso da maquina.
+  _dia(d) {
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  }
+
+  async painel(dias = 30) {
+    const n = Math.min(Math.max(Number(dias) || 30, 7), 180);
+    const hoje = new Date();
+    const ini = new Date(hoje); ini.setDate(ini.getDate() - (n - 1));
+    const dIni = this._dia(ini);
+    const dHoje = this._dia(hoje);
+    // primeiro dia do mes corrente
+    const dMes = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-01`;
+
+    const [reps] = await this.pool.query(
+      `SELECT e.id_Equipamento, e.Nome, e.IpAddress, e.Porta, e.REPType, e.ModoConexao,
+              e.qtdePessoas, e.qtdeDigitais, s.last_sync, s.last_nsr, s.ativo AS sync_ativo
+         FROM equipamentos e
+         LEFT JOIN sync_status s ON s.id_Equipamento = e.id_Equipamento
+        ORDER BY e.id_Equipamento`
+    );
+
+    const [totais] = await this.pool.query(
+      `SELECT
+         (SELECT COUNT(*) FROM pessoas) AS pessoas,
+         (SELECT COUNT(*) FROM equipamentos) AS reps,
+         (SELECT COUNT(*) FROM templates WHERE tipo = 'digital') AS digitais,
+         (SELECT COUNT(*) FROM templates WHERE tipo = 'face') AS faces,
+         (SELECT COUNT(*) FROM afd) AS afd_total`
+    );
+
+    const [hojeRow] = await this.pool.query(
+      'SELECT COUNT(*) AS c FROM afd WHERE Data >= ? AND Data < DATE_ADD(?, INTERVAL 1 DAY)',
+      [dHoje + ' 00:00:00', dHoje]
+    );
+    const [mesRow] = await this.pool.query(
+      'SELECT COUNT(*) AS c FROM afd WHERE Data >= ?', [dMes + ' 00:00:00']
+    );
+    const [iniRow] = await this.pool.query(
+      'SELECT COUNT(*) AS c FROM afd WHERE Data >= ? AND Data < DATE_ADD(?, INTERVAL 1 DAY)',
+      [dIni + ' 00:00:00', dHoje]
+    );
+
+    // serie diaria: preenche os dias sem marcação com 0 (o grafico nao pode
+    // "pular" um dia e fazer o cliente achar que nao houve coleta)
+    const [serie] = await this.pool.query(
+      `SELECT DATE(Data) AS dia, COUNT(*) AS c, COUNT(DISTINCT PIS) AS pessoas
+         FROM afd
+        WHERE Data >= ? AND Data < DATE_ADD(?, INTERVAL 1 DAY)
+        GROUP BY DATE(Data) ORDER BY dia`,
+      [dIni + ' 00:00:00', dHoje]
+    );
+    const porDia = {};
+    for (const r of serie) {
+      const d = r.dia instanceof Date ? this._dia(r.dia) : String(r.dia).slice(0, 10);
+      porDia[d] = { total: Number(r.c) || 0, pessoas: Number(r.pessoas) || 0 };
+    }
+    const serieDias = [];
+    for (let i = 0; i < n; i++) {
+      const d = new Date(ini); d.setDate(d.getDate() + i);
+      const chave = this._dia(d);
+      serieDias.push({ dia: chave, ...(porDia[chave] || { total: 0, pessoas: 0 }) });
+    }
+
+    // marcações por REP no periodo (grafico de barras comparativo)
+    const [porRep] = await this.pool.query(
+      `SELECT id_Equipamento, COUNT(*) AS total
+         FROM afd WHERE Data >= ? AND Data < DATE_ADD(?, INTERVAL 1 DAY)
+        GROUP BY id_Equipamento`,
+      [dIni + ' 00:00:00', dHoje]
+    );
+    const porRepMap = {};
+    for (const r of porRep) porRepMap[r.id_Equipamento] = Number(r.total) || 0;
+
+    // ultimas batidas (amostra para a tabela)
+    const [ultimas] = await this.pool.query(
+      `SELECT a.id_Equipamento, a.PIS, a.NSR, a.Data, e.Nome AS rep_nome
+         FROM afd a LEFT JOIN equipamentos e ON e.id_Equipamento = a.id_Equipamento
+        ORDER BY a.Data DESC, a.NSR DESC LIMIT 10`
+    );
+
+    // empresa mais ativa no periodo — util como "destaque" do painel
+    const [topPessoas] = await this.pool.query(
+      `SELECT p.id_pessoa, p.Nome, p.PIS, p.CPF, COUNT(*) AS c
+         FROM afd a JOIN pessoas p ON p.PIS = a.PIS
+        WHERE a.Data >= ? AND a.Data < DATE_ADD(?, INTERVAL 1 DAY)
+        GROUP BY p.id_pessoa, p.Nome, p.PIS, p.CPF
+        ORDER BY c DESC LIMIT 5`,
+      [dIni + ' 00:00:00', dHoje]
+    );
+
+    const ultimaSync = reps.map((r) => r.last_sync).filter(Boolean)
+      .sort((a, b) => new Date(b) - new Date(a))[0] || null;
+
+    return {
+      periodo_dias: n,
+      cards: {
+        pessoas: Number(totais[0].pessoas) || 0,
+        reps: Number(totais[0].reps) || 0,
+        digitais: Number(totais[0].digitais) || 0,
+        faces: Number(totais[0].faces) || 0,
+        marcacoes_hoje: Number(hojeRow[0].c) || 0,
+        marcacoes_mes: Number(mesRow[0].c) || 0,
+        marcacoes_periodo: Number(iniRow[0].c) || 0,
+        afd_total: Number(totais[0].afd_total) || 0,
+        ultima_sync: ultimaSync,
+      },
+      serie: serieDias,
+      por_rep: reps.map((r) => ({
+        id_Equipamento: r.id_Equipamento,
+        nome: r.Nome,
+        tipo: r.REPType,
+        modo: r.ModoConexao || 'nuvem_puxa',
+        ip: r.IpAddress,
+        porta: r.Porta,
+        qtdePessoas: Number(r.qtdePessoas) || 0,
+        qtdeDigitais: Number(r.qtdeDigitais) || 0,
+        last_sync: r.last_sync,
+        last_nsr: r.last_nsr === null ? null : Number(r.last_nsr) || 0,
+        sync_ativo: r.sync_ativo === null ? null : !!r.sync_ativo,
+        marcacoes_periodo: porRepMap[r.id_Equipamento] || 0,
+      })),
+      ultimas_marcacoes: ultimas.map((r) => ({
+        id_Equipamento: r.id_Equipamento,
+        rep_nome: r.rep_nome,
+        pis: r.PIS,
+        nsr: r.NSR,
+        data: r.Data,
+      })),
+      top_pessoas: topPessoas.map((r) => ({
+        id_pessoa: r.id_pessoa,
+        nome: r.Nome,
+        documento: r.CPF || r.PIS,
+        marcacoes: Number(r.c) || 0,
+      })),
+    };
+  }
 }

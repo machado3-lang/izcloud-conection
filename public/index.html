@@ -97,6 +97,36 @@ body {
 .page-title { font-size: 2rem; font-weight: 700; letter-spacing: -1px; }
 .page-subtitle { color: var(--text-secondary); margin-top: 0.25rem; font-size: 0.95rem; }
 
+/* ---------- Painel ---------- */
+.pn-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(178px, 1fr)); gap: 1rem; }
+.pn-card {
+  background: var(--glass-bg); border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md); padding: 1.1rem 1.2rem; position: relative; overflow: hidden;
+}
+.pn-card::after { content: ''; position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--accent-gradient); }
+.pn-card .k { font-size: .72rem; text-transform: uppercase; letter-spacing: .5px; color: var(--text-muted); }
+.pn-card .v { font-size: 1.85rem; font-weight: 700; margin-top: .25rem; line-height: 1.1; }
+.pn-card .s { font-size: .75rem; color: var(--text-secondary); margin-top: .25rem; }
+.pn-card.warn::after { background: linear-gradient(135deg, #f59e0b, #ef4444); }
+.pn-duplo { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 1.5rem; margin-top: 1.5rem; }
+
+.pn-graf-wrap { width: 100%; overflow-x: auto; }
+.pn-graf { display: block; }
+.pn-graf .barra { fill: url(#pnGrad); }
+.pn-graf .barra-hoje { fill: #22c55e; }
+.pn-graf .eixo { stroke: var(--glass-border); stroke-width: 1; }
+.pn-graf .rot { fill: var(--text-muted); font-size: 10px; }
+.pn-graf .rot-val { fill: var(--text-secondary); font-size: 10px; }
+.pn-legend { display: flex; gap: 1.2rem; flex-wrap: wrap; margin-top: .75rem; font-size: .78rem; color: var(--text-secondary); }
+.pn-legend span { display: inline-flex; align-items: center; gap: .4rem; }
+.pn-legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
+.pn-vazio { text-align: center; padding: 2.5rem 1rem; color: var(--text-muted); }
+.pn-vazio .big { font-size: 2rem; margin-bottom: .5rem; opacity: .55; }
+.pn-alerta { display: flex; gap: .6rem; align-items: flex-start; padding: .8rem 1rem; border-radius: var(--radius-md); margin-bottom: .75rem; font-size: .87rem; line-height: 1.5; }
+.pn-alerta.am { background: rgba(245,158,11,.1); border: 1px solid var(--warning); color: #fde68a; }
+.pn-alerta.r  { background: rgba(239,68,68,.1);  border: 1px solid var(--danger);  color: #fecaca; }
+
 /* ---------- Glass card ---------- */
 .glass-card {
   background: var(--glass-bg); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
@@ -254,7 +284,8 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
   <div class="app-body">
     <aside class="sidebar">
       <nav class="nav-menu">
-        <button class="nav-item active" data-pane="reps"><span id="ni-reps"></span> REPs</button>
+        <button class="nav-item active" data-pane="painel"><span id="ni-painel"></span> Painel</button>
+        <button class="nav-item" data-pane="reps"><span id="ni-reps"></span> REPs</button>
         <button class="nav-item" data-pane="pessoas"><span id="ni-pessoas"></span> Funcionários</button>
         <button class="nav-item" data-pane="afd"><span id="ni-afd"></span> AFD</button>
         <button class="nav-item" data-pane="usuarios"><span id="ni-usuarios"></span> Usuários</button>
@@ -268,10 +299,49 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
 
       <div class="header">
         <div>
-          <div class="page-title" id="page-title">REPs</div>
+          <div class="page-title" id="page-title">Painel</div>
           <div class="page-subtitle" id="page-subtitle"></div>
         </div>
       </div>
+
+      <!-- PAINEL -->
+      <section data-pane="painel" class="fade-in">
+        <div id="pn_alertas"></div>
+
+        <div class="pn-cards" id="pn_cards"></div>
+
+        <div class="glass-card" style="margin-top:1.5rem;">
+          <div class="row" style="align-items:center;">
+            <div style="flex:1;"><h3 style="margin:0;"><span id="h-graf"></span> Marcações por dia</h3></div>
+            <div style="flex:0 0 auto;">
+              <select id="pn_periodo" class="form-input" style="width:auto;">
+                <option value="7">7 dias</option>
+                <option value="14">14 dias</option>
+                <option value="30" selected>30 dias</option>
+                <option value="90">90 dias</option>
+              </select>
+            </div>
+            <div style="flex:0 0 auto;"><button class="btn-ghost" id="pn_refresh">Atualizar</button></div>
+          </div>
+          <div id="pn_grafico" style="margin-top:1rem;"></div>
+        </div>
+
+        <div class="glass-card" style="margin-top:1.5rem;">
+          <h3><span id="h-strep"></span> Status dos REPs</h3>
+          <div id="pn_reps"></div>
+        </div>
+
+        <div class="pn-duplo">
+          <div class="glass-card">
+            <h3><span id="h-ult"></span> Últimas marcações</h3>
+            <div id="pn_ultimas"></div>
+          </div>
+          <div class="glass-card">
+            <h3><span id="h-top"></span> Quem mais marcou no período</h3>
+            <div id="pn_top"></div>
+          </div>
+        </div>
+      </section>
 
       <!-- REPs -->
       <section data-pane="reps" class="fade-in">
@@ -475,6 +545,7 @@ const ICONS = {
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
   building: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M8 10h.01M16 10h.01M8 14h.01M16 14h.01"/>',
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+  chart: '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
 };
 function ic(name, size = 18) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ''}</svg>`;
@@ -486,12 +557,14 @@ function mountIcons() {
   const alvos = {
     'brand-ico': ['cloud', 18], 'login-brand': ['cloud', 22],
     'l-ico-user': ['user', 16], 'l-ico-lock': ['lock', 16],
+    'ni-painel': ['chart', 18],
     'ni-reps': ['server', 18], 'ni-pessoas': ['users', 18], 'ni-afd': ['clock', 18],
     'ni-usuarios': ['user', 18], 'ni-admin': ['shield', 18], 'ni-out': ['logout', 18],
     'h-probe': ['radio', 16], 'h-cad': ['save', 16], 'h-list': ['list', 16],
     'h-vinc': ['users', 16], 'h-add': ['user', 16],
     'h-sync': ['refresh', 16], 'h-exp': ['download', 16], 'h-user': ['user', 16],
     'h-sync2': ['refresh', 16],
+    'h-graf': ['chart', 16], 'h-strep': ['server', 16], 'h-ult': ['clock', 16], 'h-top': ['users', 16],
   };
   for (const [id, [nome, tam]] of Object.entries(alvos)) {
     const el = $(id);
@@ -568,9 +641,9 @@ function applyAuth() {
   // O item "Administração" só existe para admin da plataforma.
   $('nav_admin').classList.toggle('hidden', !(logged && PERFIL.tipo === 'conta' && PERFIL.papel === 'admin'));
   if (logged) {
-    showPane('reps');
+    showPane('painel');
     renderEmpresaBar();
-    if (temEmpresa()) { loadReps(); carregarVinculo(); if (podeGerenciar()) loadUsuarios(); }
+    if (temEmpresa()) { carregarPainel(); loadReps(); carregarVinculo(); if (podeGerenciar()) loadUsuarios(); }
     atualizarPerfil(); // papel pode ter mudado desde o ultimo login
   }
 }
@@ -666,7 +739,7 @@ function renderEmpresaBar() {
   sel.value = EMP_SCHEMA;
   sel.onchange = () => {
     const e = EMPRESAS.find(x => x.schema === sel.value);
-    if (e) { selecionarEmpresa(e.schema, e.id_cliente); renderEmpresaBar(); loadReps(); carregarVinculo(); if (podeGerenciar()) loadUsuarios(); }
+    if (e) { selecionarEmpresa(e.schema, e.id_cliente); renderEmpresaBar(); carregarPainel(); loadReps(); carregarVinculo(); if (podeGerenciar()) loadUsuarios(); }
   };
   renderEmpCard();
 }
@@ -737,6 +810,7 @@ $('em_save').onclick = async () => {
 
 // ---------- navegação ----------
 const TITLES = {
+  painel: ['Painel', 'Visão geral da empresa: marcações, funcionários e status dos REPs.'],
   reps: ['REPs', 'Sondar, cadastrar e listar os equipamentos da empresa.'],
   pessoas: ['Funcionários', 'Vincular colaboradores aos REPs e enviar à memória do REP.'],
   afd: ['AFD', 'Sincronizar e exportar as marcações.'],
@@ -749,6 +823,221 @@ function showPane(name) {
   if (t) { $('page-title').textContent = t[0]; $('page-subtitle').textContent = t[1]; }
 }
 document.querySelectorAll('.nav-item[data-pane]').forEach(b => b.onclick = () => showPane(b.dataset.pane));
+
+// ---------- Painel ----------
+let PAINEL = null;
+
+function escHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function num(n) { return Number(n || 0).toLocaleString('pt-BR'); }
+function quando(v) {
+  if (!v) return 'nunca';
+  const d = v instanceof Date ? v : new Date(v);
+  if (isNaN(d)) return '—';
+  const seg = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (seg < 60) return 'agora mesmo';
+  if (seg < 3600) return `há ${Math.floor(seg / 60)} min`;
+  if (seg < 86400) return `há ${Math.floor(seg / 3600)} h`;
+  return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+function hhmm(v) {
+  const d = v instanceof Date ? v : new Date(v);
+  if (!v || isNaN(d)) return '—';
+  return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+async function carregarPainel() {
+  if (!temEmpresa()) {
+    $('pn_cards').innerHTML = '<div class="pn-vazio"><div class="big">🏢</div>Selecione uma empresa para ver o painel.</div>';
+    ['pn_alertas', 'pn_grafico', 'pn_reps', 'pn_ultimas', 'pn_top'].forEach((k) => { if ($(k)) $(k).innerHTML = ''; });
+    return;
+  }
+  const dias = Number($('pn_periodo').value) || 30;
+  try {
+    PAINEL = await api('/api/painel?dias=' + dias);
+    renderPainel();
+  } catch (e) {
+    $('pn_cards').innerHTML = '<div class="pn-vazio"><div class="big">⚠️</div>' + escHtml(e.message) + '</div>';
+  }
+}
+
+function renderPainel() {
+  const d = PAINEL;
+  if (!d) return;
+  const c = d.cards;
+
+  // Cards
+  const cards = [
+    { k: 'Marcações hoje', v: num(c.marcacoes_hoje), s: `${num(c.marcacoes_mes)} no mês` },
+    { k: 'Pessoas', v: num(c.pessoas), s: `${num(c.reps)} REP(s) cadastrado(s)` },
+    { k: 'Biometria', v: num(c.digitais), s: `${num(c.faces)} face(s)` },
+    { k: 'Última sincronização', v: quando(c.ultima_sync).replace('há ', ''), s: c.ultima_sync ? new Date(c.ultima_sync).toLocaleString('pt-BR') : 'nunca sincronizado', pequeno: true,
+      warn: !c.ultima_sync },
+  ];
+  $('pn_cards').innerHTML = cards.map((x) =>
+    `<div class="pn-card${x.warn ? ' warn' : ''}">
+       <div class="k">${escHtml(x.k)}</div>
+       <div class="v" style="${x.pequeno ? 'font-size:1.25rem' : ''}">${escHtml(x.v)}</div>
+       <div class="s">${escHtml(x.s)}</div>
+     </div>`).join('');
+
+  renderAlertas(d);
+  renderGrafico(d);
+  renderStatusReps(d);
+  renderUltimas(d);
+  renderTop(d);
+}
+
+function renderAlertas(d) {
+  const a = [];
+  const semSync = d.por_rep.filter((r) => !r.last_sync);
+  if (semSync.length) {
+    a.push({ t: 'am', m: `${semSync.length} REP(s) nunca sincronizaram: ${semSync.map((r) => r.nome || r.id_Equipamento).join(', ')}. Use a aba AFD para buscar as marcações.` });
+  }
+  if (d.por_rep.length && !d.cards.ultima_sync) {
+    a.push({ t: 'am', m: 'Nenhuma marcação chegou ao iZCloud ainda. while o REP estiver na mesma rede do servidor, a aba AFD sincroniza; se estiver em outro local, precisamos configurar o acesso (ver documentação de IP).' });
+  }
+  const zerados = d.serie.filter((x) => x.total === 0);
+  if (zerados.length === d.serie.length && d.serie.length > 2) {
+    a.push({ t: 'am', m: `Nenhuma marcação nos últimos ${d.periodo_dias} dias. Verifique se os REPs estão com employees e se a sincronização está ativa.` });
+  }
+  $('pn_alertas').innerHTML = a.map((x) => `<div class="pn-alerta ${x.t}"><span>⚠️</span><span>${escHtml(x.m)}</span></div>`).join('');
+}
+
+function renderGrafico(d) {
+  const box = $('pn_grafico');
+  const serie = d.serie || [];
+  if (!serie.length) { box.innerHTML = '<div class="pn-vazio">Sem dados no período.</div>'; return; }
+  const total = serie.reduce((s, x) => s + x.total, 0);
+  if (!total) {
+    box.innerHTML = `<div class="pn-vazio"><div class="big">📊</div>Sem marcações nos últimos ${d.periodo_dias} dias.<br/>Assim que o REP sincronizar, o gráfico aparece aqui.</div>`;
+    return;
+  }
+
+  // Dimensões: largura proporcional ao nº de dias (mín. para caber as barras).
+  const L = 46, R = 12, T = 14, B = 26;
+  const gap = 3;
+  const bw = serie.length > 45 ? 10 : serie.length > 30 ? 16 : 24;
+  const H = 230;
+  const W = L + serie.length * (bw + gap) + R;
+  const max = Math.max(...serie.map((x) => x.total), 1);
+  const escalaY = (H - T - B);
+  const ultimoDia = serie[serie.length - 1].dia;
+
+  // Passo do eixo Y: arredonda o topo para um numero "redondo".
+  const passo = Math.max(1, Math.ceil(max / 4 / 10) * 10);
+  const topoY = passo * Math.max(1, Math.ceil(max / passo));
+  const y = (v) => T + escalaY - (v / topoY) * escalaY;
+
+  const barras = serie.map((x, i) => {
+    const bx = L + i * (bw + gap);
+    const h = Math.max(x.total > 0 ? 2 : 0, (x.total / topoY) * escalaY);
+    const by = T + escalaY - h;
+    const cls = x.dia === ultimoDia ? 'barra barra-hoje' : 'barra';
+    return `<rect class="${cls}" x="${bx}" y="${by.toFixed(1)}" width="${bw}" height="${h.toFixed(1)}" rx="2"><title>${escHtml(x.dia.split('-').reverse().join('/'))}: ${num(x.total)} marcação(ões) — ${num(x.pessoas)} pessoa(s)</title></rect>`;
+  }).join('');
+
+  // Rotulos do eixo X: no máximo ~8, para nao amontoar.
+  const passoRot = Math.max(1, Math.ceil(serie.length / 8));
+  const rotX = serie.map((x, i) => (i % passoRot === 0 || i === serie.length - 1)
+    ? `<text class="rot" x="${(L + i * (bw + gap) + bw / 2).toFixed(1)}" y="${H - 8}" text-anchor="middle">${escHtml(x.dia.slice(8))}/${escHtml(x.dia.slice(5, 7))}</text>`
+    : '').join('');
+
+  const linhasY = [0, 1, 2, 3, 4].map((i) => {
+    const v = (topoY / 4) * i;
+    return `<line class="eixo" x1="${L}" y1="${y(v).toFixed(1)}" x2="${W - R}" y2="${y(v).toFixed(1)}" opacity="${i === 0 ? 1 : .35}"/>
+            <text class="rot-val" x="${L - 7}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end">${v >= 1000 ? (v / 1000).toFixed(v % 1000 ? 1 : 0) + 'k' : v}</text>`;
+  }).join('');
+
+  box.innerHTML =
+    `<div class="pn-graf-wrap"><svg class="pn-graf" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Marcações por dia">
+       <defs><linearGradient id="pnGrad" x1="0" y1="0" x2="0" y2="1">
+         <stop offset="0%" stop-color="#22c55e"/><stop offset="100%" stop-color="#0ea5e9"/>
+       </linearGradient></defs>
+       ${linhasY}${barras}${rotX}
+     </svg></div>
+     <div class="pn-legend">
+       <span><i style="background:linear-gradient(180deg,#22c55e,#0ea5e9)"></i> Marcações por dia</span>
+       <span><i style="background:#22c55e"></i> Hoje</span>
+       <span class="muted">Total no período: <b style="color:var(--text-primary)">${num(total)}</b></span>
+     </div>`;
+}
+
+function renderStatusReps(d) {
+  const box = $('pn_reps');
+  if (!d.por_rep.length) {
+    box.innerHTML = `<div class="pn-vazio"><div class="big">🖥️</div>Nenhum REP cadastrado.<br/>Vá em <b>REPs</b> e use <b>Sondar</b> para conectar o primeiro equipamento.</div>`;
+    return;
+  }
+  const linhas = d.por_rep.map((r) => {
+    const horas = r.last_sync ? (Date.now() - new Date(r.last_sync).getTime()) / 3600000 : null;
+    const estado = r.last_sync === null
+      ? '<span class="pill r">nunca sincronizou</span>'
+      : horas < 1 ? '<span class="pill g">online</span>'
+      : horas < 24 ? '<span class="pill am">há ' + Math.floor(horas) + ' h</span>'
+      : '<span class="pill r">há ' + Math.floor(horas / 24) + ' d</span>';
+    const modo = r.modo === 'rep_empurra'
+      ? '<span class="pill am" title="O REP empurra para a nuvem">empurra</span>'
+      : '<span class="pill c" title="O iZCloud puxa do REP">puxa</span>';
+    const doc = num(r.qtdePessoas) + ' pessoas / ' + num(r.qtdeDigitais) + ' digitais';
+    return `<tr>
+      <td>${r.id_Equipamento}</td>
+      <td><b>${escHtml(r.nome || 'REP ' + r.id_Equipamento)}</b>
+        <div class="muted" style="font-size:.75rem">${escHtml(doc)}</div></td>
+      <td>${r.tipo ? '<span class="pill c">' + escHtml(r.tipo) + '</span>' : '-'}</td>
+      <td>${modo}</td>
+      <td>${estado}</td>
+      <td class="muted">${escHtml(r.last_sync ? hhmm(r.last_sync) : '—')}</td>
+      <td>${num(r.marcacoes_periodo)}</td>
+    </tr>`;
+  }).join('');
+  box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr>' +
+    '<th>ID</th><th>Nome</th><th>Tipo</th><th>Modo</th><th>Situação</th><th>Última sync</th><th>Marcações</th>' +
+    '</tr></thead><tbody>' + linhas + '</tbody></table></div>';
+}
+
+function renderUltimas(d) {
+  const box = $('pn_ultimas');
+  if (!d.ultimas_marcacoes.length) {
+    box.innerHTML = '<div class="pn-vazio">Nenhuma marcação registrada.</div>';
+    return;
+  }
+  box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr>' +
+    '<th>Quando</th><th>REP</th><th>Documento</th><th>NSR</th></tr></thead><tbody>' +
+    d.ultimas_marcacoes.map((m) => `<tr>
+      <td style="white-space:nowrap">${escHtml(hhmm(m.data))}</td>
+      <td>${escHtml(m.rep_nome || m.id_Equipamento)}</td>
+      <td>${escHtml(m.pis || '-')}</td>
+      <td class="muted">${escHtml(m.nsr)}</td>
+    </tr>`).join('') + '</tbody></table></div>';
+}
+
+function renderTop(d) {
+  const box = $('pn_top');
+  if (!d.top_pessoas.length) {
+    box.innerHTML = `<div class="pn-vazio">Sem marcações no período para comparar.</div>`;
+    return;
+  }
+  const max = Math.max(...d.top_pessoas.map((p) => p.marcacoes), 1);
+  box.innerHTML = d.top_pessoas.map((p) => {
+    const pct = Math.round((p.marcacoes / max) * 100);
+    return `<div style="margin-bottom:.85rem;">
+      <div style="display:flex;justify-content:space-between;gap:.5rem;font-size:.86rem;">
+        <span>${escHtml(p.nome || '—')}</span>
+        <span class="muted" style="white-space:nowrap">${num(p.marcacoes)}</span>
+      </div>
+      <div class="muted" style="font-size:.74rem;margin-bottom:.25rem">${escHtml(p.documento || '')}</div>
+      <div style="height:6px;background:rgba(255,255,255,.05);border-radius:3px;overflow:hidden">
+        <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#0ea5e9,#22c55e)"></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+$('pn_refresh').onclick = carregarPainel;
+$('pn_periodo').onchange = carregarPainel;
 
 // ---------- REPs ----------
 $('p_probe').onclick = async () => {

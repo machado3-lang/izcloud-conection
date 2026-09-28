@@ -460,6 +460,13 @@ app.get('/api/pessoas/biometria', async (req, res) => {
   catch (e) { res.status(502).json({ error: e.message }); }
 });
 
+// Painel de visualizacao: cards + serie diaria + status por REP.
+// ?dias=30 (7..180) define a janela do grafico.
+app.get('/api/painel', async (req, res) => {
+  try { res.json(await new IdCloudClient(req.db).painel(req.query.dias)); }
+  catch (e) { res.status(502).json({ error: e.message }); }
+});
+
 // Importar usuarios + biometria DA memoria do REP para o iZCloud (e vincula ao REP)
 app.post('/api/pessoas/importar', async (req, res) => {
   try {

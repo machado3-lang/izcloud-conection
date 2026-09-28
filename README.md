@@ -957,6 +957,78 @@ Total: 21 + 16 + 49 + 16 asserções, 4 suítes, 5 cenários, todas passando.
 
 ---
 
+## 12.19 Painel de visualização da empresa (2026-09-26)
+
+Primeira tela do cliente: visão geral, sem depender de rede externa nem de REP
+sincronizado.
+
+### 12.19.1 Backend
+
+`IdCloudClient.painel(dias)` (`idcloud.js`) monta tudo numa chamada:
+
+- **cards:** marcações hoje, no mês e no período, pessoas, REPs, digitais, faces,
+  última sincronização
+- **serie:** um item por dia, **sem buracos** (dia sem marcação vem com 0, senão o
+  gráfico "pula" um dia e o cliente acha que não houve coleta)
+- **por_rep:** situação de cada REP (online / há N h / nunca sincronizou), modo
+  de conexão, última sync, NSR, marcações no período
+- **ultimas_marcacoes:** as 10 últimas, com nome do REP
+- **top_pessoas:** ranking de quem mais marcou no período
+
+Rotas: `GET /api/painel?dias=30` (aceita 7 a 180; fora da faixa cai no limite,
+texto inválido cai em 30). Escopo pelo mesmo `X-Empresa` do resto — uma empresa
+não vê dado de outra.
+
+O corte do dia é montado em JS (`_dia()`) e não com `NOW()`, porque `DATETIME`
+não guarda fuso: `CURDATE()` no servidor de outra região daria o dia errado.
+
+### 12.19.2 Tela
+
+Aba **Painel** como primeira do menu, no mesmo design system:
+
+- 4 cards com barra colorida lateral (o de biometria fica em destaque)
+- **gráfico de barras SVG desenhado à mão** — sem biblioteca externa, com
+  gradiente, dia de hoje em verde, tooltip por barra, eixo Y com passo "redondo"
+  e rotulos de data que não se amontoam
+- **alertas** no topo: REP que nunca sincronizou, empresa sem nenhuma marcação,
+  período inteiro zerado
+- tabela de **status dos REPs**
+- duas colunas: últimas marcações e ranking de pessoas
+
+Estado vazio é tratado em todos os blocos (empresa sem REP, sem marcação, etc.).
+
+### 12.19.3 Dois bugs que os testes acharam
+
+1. **O card de Biometria sempre mostraria 0.** A API devolvia `cards.digitais` e a
+   UI lia `c.digitalis` — nomes trocados. Só apareceu porque a suíte do painel
+   compara o card com o que o SQL devolveu.
+2. **Colisão de variável em `painel()`:** o parâmetro `dias` e a lista da série
+   chamavam os dois `dias` — `SyntaxError` na hora de carregar o módulo, ou seja,
+   o servidor inteiro não subia. Pego por `node --check`.
+
+### 12.19.4 Testes
+
+`.tmp-painel/test.mjs` — 9 grupos, com pool falso que devolve linhas no **mesmo
+formato do SQL** (mesma grafia de coluna), para não validar contra uma fantasia:
+
+- soma da série bate com o card do período; soma por REP bate com a série
+- série em ordem, 30 dias, com buracos preenchidos, pico visível
+- REP nunca sincronizado aparece com `last_sync` nulo
+- ranking usa CPF quando existe, senão PIS
+- **empresa totalmente vazia não lança exceção** (0 em tudo)
+- janela 7/90, e clamp fora de faixa
+
+Total: 21 + 16 + 49 + 16 + 22 asserções, 5 suítes, todas passando.
+
+### 12.19.5 Ainda pendente (depende de rede/REP)
+
+O painel mostra os dados que **já estão** no banco. Para ele encher de verdade é
+preciso que marcações cheguem: hoje só pelo `POST /api/afd/sync` (que precisa
+alcançar o REP) ou por push, que ainda não existe. Está em andamento o teste do
+`txtIPCloud` com domínio.
+
+---
+
 ## 13. Deploy no Railway (definido)
 
 Decisão: subir no **Railway** a partir deste repo GitHub (Oracle Cloud Free foi
