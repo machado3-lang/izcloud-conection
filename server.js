@@ -10,7 +10,7 @@ import { probe, enviarUsuarios, lerUsuarios, mapearUsuario } from './repClient.j
 import { IdCloudClient } from './idcloud.js';
 import { gerarPorPeriodo } from './afd.js';
 import { sincronizarAfd, iniciarPoller } from './sync.js';
-import { getCorePool, getTenantPool, verificarConexaoCore, inicializarCore, criarCliente, listarClientes, criarUsuario, listarUsuarios, removerUsuario, criarConta, verificarConta, buscarConta, existeAdmin, listarEmpresas, criarEmpresa, atualizarEmpresa, listarContas, atualizarConta, resetarSenhaConta, listarTodasEmpresas, atualizarEmpresaAdmin, auditar, listarAuditoria } from './core.js';
+import { getCorePool, getTenantPool, verificarConexaoCore, inicializarCore, criarCliente, listarClientes, criarUsuario, listarUsuarios, removerUsuario, criarConta, verificarConta, buscarConta, existeAdmin, listarEmpresas, criarEmpresa, atualizarEmpresa, listarContas, atualizarConta, resetarSenhaConta, listarTodasEmpresas, atualizarEmpresaAdmin, auditar, listarAuditoria, aplicarMigracoesTenant, gerarCredencialRep } from './core.js';
 import { login, authTenant, authConta, authAdmin, adminKey, requireAdmin, requireTenantAdmin, limiteTentativas, registrarFalha, limparFalhas, validarLogin, validarSenha } from './auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -182,6 +182,25 @@ app.post('/api/empresas', async (req, res) => {
     validarSenha(req.body.senha);
     const r = await criarEmpresa({ id_conta: req.conta.id_conta, ...req.body });
     res.json({ ok: true, ...r });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Migra o schema do tenant para o contrato iDCloud (tabelas/indices que podem
+// faltar em empresas criadas antes). Idempotente.
+app.post('/api/empresas/migrar-contrato', async (req, res) => {
+  try {
+    const aplicadas = await aplicarMigracoesTenant(req.tenant.schema);
+    res.json({ ok: true, schema: req.tenant.schema, aplicadas });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Cria/rotaciona o usuario MySQL que o REP usara para conectar direto no banco
+// desta empresa (como no iDCloud oficial). Mostra a senha uma unica vez.
+app.post('/api/empresas/credencial-rep', async (req, res) => {
+  try {
+    const r = await gerarCredencialRep(req.tenant.empresa_id, { usuario: req.body.usuario });
+    await auditar({ id_conta: req.conta.id_conta, acao: 'credencial_rep_gerada', alvo: r.empresa, ip: req.ip });
+    res.json(r);
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
@@ -410,18 +429,29 @@ app.post('/api/reps/probe', async (req, res) => {
 
 app.post('/api/reps', async (req, res) => {
   try {
-    const { id_Equipamento, Nome, IpAddress, Porta, Passcode, REPType, ModoConexao } = req.body;
+    const { id_Equipamento, Serial, serial, Nome, IpAddress, Porta, Passcode, REPType, ModoConexao } = req.body;
+    // No contrato iDCloud o REP se reconhece lendo `equipamentos` e casando
+    // id_Equipamento com a propria identidade. Logo o id tem que ser o que o
+    // APARELHO reportou no get_about (nSerie), nunca um numero escolhido na tela.
+    // Se o front mandou `serial`, ele manda no id.
+    const serialTexto = String(serial || Serial || '').trim();
+    const idDoAparelho = serialTexto ? Number(serialTexto) : null;
+    const id = idDoAparelho !== null && !Number.isNaN(idDoAparelho)
+      ? idDoAparelho
+      : Number(id_Equipamento);
+    if (!Number.isInteger(id) || id <= 0) throw new Error('Informe o numero de serie do REP (o que o Sondar devolve)');
+
     const client = new IdCloudClient(req.db);
     await client.pool.query(
       `INSERT INTO equipamentos
-       (id_Equipamento, Nome, IpAddress, Porta, Passcode, REPType, ModoConexao, DataAtualizacao)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
-       ON DUPLICATE KEY UPDATE Nome=VALUES(Nome), IpAddress=VALUES(IpAddress),
+       (id_Equipamento, Serial, Nome, IpAddress, Porta, Passcode, REPType, ModoConexao, DataAtualizacao)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE Serial=VALUES(Serial), Nome=VALUES(Nome), IpAddress=VALUES(IpAddress),
          Porta=VALUES(Porta), Passcode=VALUES(Passcode), REPType=VALUES(REPType), ModoConexao=VALUES(ModoConexao)`,
-      [id_Equipamento, Nome, IpAddress, Porta, Passcode, REPType, ModoConexao || 'nuvem_puxa']
+      [id, serialTexto || String(id), Nome, IpAddress, Porta, Passcode, REPType, ModoConexao || 'nuvem_puxa']
     );
-    res.json({ ok: true });
-  } catch (e) { res.status(502).json({ error: e.message }); }
+    res.json({ ok: true, id_Equipamento: id, serial: serialTexto || String(id) });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 app.get('/api/reps', async (req, res) => {

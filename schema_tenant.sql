@@ -2,9 +2,15 @@
 -- Sem CREATE DATABASE / USE: o core cria o schema e roda este script dentro dele.
 -- Espelha o modelo iDCloud (ControlID), confinado ao tenant.
 
--- Equipamentos (REPs).Lectura/escrita pela nuvem.
+-- Equipamentos (REPs). No iDCloud e' SOMENTE LEITURA pelo REP.
+-- REGRA IMPORTANTE: id_Equipamento e' o identificador com que o REP se reconhece
+-- ao ler esta tabela (a doc oficial diz "numero de serie"). CUIDADO com o tipo:
+-- um serial real tem 17 digitos (ex.: 00014003750029470) e NAO caberia em INT
+-- (2.147.483.647). Por isso BIGINT. `Serial` guarda a string exata, com os
+-- zeros a esquerda, para conferencia.
 CREATE TABLE IF NOT EXISTS equipamentos (
-  id_Equipamento INT PRIMARY KEY,
+  id_Equipamento BIGINT PRIMARY KEY,
+  Serial VARCHAR(32),        -- nSerie como texto, zeros preservados
   id_Empregador INT,
   Nome CHAR(50),
   utc_Equipamento INT,
@@ -23,10 +29,39 @@ CREATE TABLE IF NOT EXISTS equipamentos (
   DataAtualizacao DATETIME
 );
 
+-- Empregador (a razao social que o REP exibe no ticket).
+CREATE TABLE IF NOT EXISTS empregadores (
+  id_Empregador INT AUTO_INCREMENT PRIMARY KEY,
+  RazaoSocial VARCHAR(50),
+  Local VARCHAR(100),
+  CNPJ_CPF VARCHAR(20),
+  CEI VARCHAR(20),
+  CPF VARCHAR(20)
+);
+
+-- Departamentos: filtro de para quem o REP envia cada pessoa.
+-- 'todos' = 1 faz quem estiver sem departamento ir para TODOS os equipamentos.
+CREATE TABLE IF NOT EXISTS departamentos (
+  id_departamento INT AUTO_INCREMENT PRIMARY KEY,
+  nome VARCHAR(50),
+  todos BIT DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS departamentos_equip (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  id_departamento INT NOT NULL,
+  id_Equipamento BIGINT NOT NULL,
+  UNIQUE KEY uq_dep_equip (id_departamento, id_Equipamento)
+);
+
 -- Para tenants ja criados (sem a coluna), rode:
 -- ALTER TABLE equipamentos ADD COLUMN ModoConexao ENUM('nuvem_puxa','rep_empurra') DEFAULT 'nuvem_puxa';
 
--- Pessoas. PIS e CPF coexistem (confirmado no AFD Downloader).
+-- People/Employees. PIS and CPF coexist (confirmed in the AFD Downloader).
+-- Contract iDCloud: DataAtualizacao e' o CURSOR de sincronizacao - sem
+-- atualiza-lo, a mudanca nunca chega ao aparelho.
+-- Excluido      = sai do aparelho, mas continua visivel (inativo) na interface
+-- ExcluidoDefinitivo = some do aparelho E da interface
 CREATE TABLE IF NOT EXISTS pessoas (
   id_pessoa INT AUTO_INCREMENT PRIMARY KEY,
   PIS BIGINT,
@@ -43,13 +78,23 @@ CREATE TABLE IF NOT EXISTS pessoas (
   DataAtualizacao DATETIME,
   id_departamento INT,
   INDEX idx_pis (PIS),
-  INDEX idx_cpf (CPF)
+  INDEX idx_cpf (CPF),
+  INDEX idx_dep (id_departamento),
+  INDEX idx_atualizacao (DataAtualizacao),
+  -- Regra do Inmetro citada na doc do iDCloud: "nao deve existir dois cartoes
+  -- (RFID) na tabela pessoas com o mesmo numero". Varios NULL sao permitidos
+  -- pelo MySQL, entao quem nao tem cartao nao e afetado.
+  UNIQUE KEY uq_rfid (Rfid)
 );
+
+-- Para tenants que ja existem (podem ter RFID repetido), quem cria o indice e
+-- aplicarMigracoesTenant() em core.js - ele so cria se nao houver duplicados, e
+-- avisa no log caso haja, em vez de falhar.
 
 -- Vinculo pessoa x equipamento
 CREATE TABLE IF NOT EXISTS equip_pessoa (
   id_Pessoa INT,
-  id_Equipamento INT,
+  id_Equipamento BIGINT,
   PRIMARY KEY (id_Pessoa, id_Equipamento)
 );
 
@@ -58,7 +103,7 @@ CREATE TABLE IF NOT EXISTS equip_pessoa (
 -- (sem isso, sincronizacoes repetidas duplicariam marcacoes).
 CREATE TABLE IF NOT EXISTS afd (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
-  id_Equipamento INT NOT NULL,
+  id_Equipamento BIGINT NOT NULL,
   PIS BIGINT,
   NSR INT NOT NULL,
   Data DATETIME,
@@ -78,7 +123,7 @@ CREATE TABLE IF NOT EXISTS afd (
 -- Marcacoes parseadas (opcional, para apuracao na nuvem)
 CREATE TABLE IF NOT EXISTS marcacoes (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
-  id_Equipamento INT,
+  id_Equipamento BIGINT,
   documento VARCHAR(20),    -- PIS ou CPF conforme o REP
   tipo_registro CHAR(1),
   data DATETIME,
@@ -89,20 +134,26 @@ CREATE TABLE IF NOT EXISTS marcacoes (
 
 -- Controle de sincronizacao incremental por equipamento (NSR)
 CREATE TABLE IF NOT EXISTS sync_status (
-  id_Equipamento INT PRIMARY KEY,
+  id_Equipamento BIGINT PRIMARY KEY,
   last_nsr INT DEFAULT 0,
   last_sync DATETIME,
   ativo BOOLEAN DEFAULT 1
 );
 
--- Templates biometricos (digitais e faces) por pessoa.
--- dados = template em base64 (formato do REP). um por (id_pessoa, tipo, indice).
+-- Biometric templates (fingerprints and faces) per person.
+-- One row per template. iDCloud contract: columns (id_Pessoa, Template), with
+-- Template being the base64 string. `Template` is kept in sync with `dados`
+-- so the REP finds the column it expects - write paths are centralized in
+-- IdCloudClient.gravarTemplate().
+-- Column names in MySQL are case-insensitive, so `id_pessoa` answers to the
+-- `id_Pessoa` the documentation uses.
 CREATE TABLE IF NOT EXISTS templates (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   id_pessoa INT NOT NULL,
   tipo VARCHAR(20),        -- 'digital' | 'face'
-  indice INT,              -- dedo (1..10) ou slot de face
+  indice INT,              -- finger (1..10) or face slot
   dados LONGTEXT,
+  Template LONGTEXT,       -- iDCloud: base64 template (mirror of dados)
   DataAtualizacao DATETIME,
   UNIQUE KEY uq_tpl (id_pessoa, tipo, indice),
   KEY idx_pessoa (id_pessoa)

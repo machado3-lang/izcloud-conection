@@ -305,28 +305,67 @@ Regra de `departamentos.todos = 1`: quem não tem departamento é enviado a
 ### 5.1 O que já está idêntico e o que falta
 
 O `schema_tenant.sql` original já usa os mesmos nomes de tabela e a mesma
-estrutura — porque foi desenhado sobre este contrato. **Já temos:**
-`equipamentos`, `pessoas` (com `PIS`, `CPF`, `Nome`, `Codigo`, `Senha`, `Matricula`,
-`Admin`, `Rfid`, `Barras`, `DataAtualizacao`), `equip_pessoa`, `templates`, `afd`
-(`NSR`, `Data`, `Dado`, `CRC`).
+estrutura — porque foi desenhado sobre este contrato. **Já tinha:** `equipamentos`,
+`pessoas` (com `PIS`, `CPF`, `Nome`, `Codigo`, `Senha`, `Matricula`, `Admin`,
+`Rfid`, `Barras`, `Excluido`, `ExcluidoDefinitivo`, `DataAtualizacao`,
+`id_departamento`), `equip_pessoa`, `templates`, `afd` (`NSR`, `Data`, `Dado`, `CRC`).
 
-**Falta para compatibilidade plena:**
+**Faltava, e foi completado em 26/09/2026:**
 
-1. tabelas `departamentos`, `departamentos_equip` e `empregadores`
-2. `pessoas.Excluido` e `pessoas.ExcluidoDefinitivo` (hoje só há `ativo`)
-3. `pessoas.id_departamento`
-4. `templates.Template` — hoje é `tipo`/`indice`/`dados`; o iDCloud espera
-   `id_Pessoa` + `Template` (base64)
-5. `PIS` como **BIGINT** (hoje é VARCHAR) e `Senha` VARCHAR(6)
-6. `equipamentos.id_Equipamento` deve ser o **número de série** (a doc diz
-   "numero de serie")
-7. usuário/senha de MySQL que o REP usará, e `GRANT` limitado ao schema da empresa
+| Item | Situação |
+|---|---|
+| tabelas `departamentos`, `departamentos_equip`, `empregadores` | **criadas** |
+| `templates.Template` (a coluna que a doc pede) | **criada**, espelha `dados` |
+| `equipamentos.Serial` (texto, com zeros à esquerda) | **criada** |
+| índice em `pessoas.DataAtualizacao` | **criado** |
+| `UNIQUE KEY uq_rfid (Rfid)` — regra do Inmetro | **criada** (tenant novo; em tenant antigo só se não houver duplicados) |
+| **`id_Equipamento` de `INT` para `BIGINT` em 6 tabelas** | **corrigido** — ver abaixo |
+| `aplicarMigracoesTenant()` | **criada** — roda ao criar empresa e por rota |
+| `gerarCredencialRep()` | **criada** — usuário MySQL com `GRANT` só no schema da empresa |
 
-### 5.2 Isolamento por empresa x contrato iDCloud
+### 5.2 O bug do `id_Equipamento` (importante)
+
+A doc diz que `id_Equipamento` é o "número de série" do aparelho e o define como
+`INT`. **Um serial real tem 17 dígitos** — o do REP de homologação é
+`00014003750029470` = 14.003.750.029.470, e `INT` para em 2.147.483.647.
+
+Nenhum REP real caberia nesse campo. Corrigido para `BIGINT` em **todas** as seis
+tabelas que o referenciam: `equipamentos`, `sync_status`, `equip_pessoa`, `afd`,
+`marcacoes`, `departamentos_equip`. Como `Serial` guarda o texto, os zeros à
+esquerda não se perdem.
+
+> **Ponto em aberto:** a doc oficial descreve `INT(11)`, que em MySQL continua
+> 32 bits — ou seja, ou a doc é imprecisa, ou o iDCloud oficial usa um id numérico
+> menor que o serial impresso na etiqueta. Não dá para resolver sem ver um REP de
+> verdade lendo o banco. Por isso a chave `Serial` existe ao lado: quando o REP for
+> testado, dá para descobrir qual das duas ele casa.
+
+### 5.3 Como o REP é cadastrado agora
+
+Antes o `id_Equipamento` era um número escolhido na tela. Isso quebraria o
+casamento do REP no banco. Agora:
+
+1. **Sondar** chama `get_about.fcgi` e devolve o `nSerie` real do aparelho;
+2. o campo de cadastro mostra esse serial, **somente leitura**;
+3. `POST /api/reps` usa o **serial como `id_Equipamento`** (o que o aparelho
+   reportou), e guarda o texto em `Serial`;
+4. salvar sem sondar antes é bloqueado na UI e a API exige um id inteiro válido.
+
+### 5.4 Isolamento por empresa x contrato iDCloud
 
 O iZCloud usa **um schema por empresa** (`tenant_0001`). O REP do iDCloud oficial
-conecta num único banco. Nada impede: o usuário MySQL de cada empresa só recebe
-`GRANT` no próprio schema. É assim que o isolamento se mantém nesse modelo.
+conecta num único banco. Nada impede: `gerarCredencialRep()` cria um usuário
+MySQL por empresa com `GRANT` **apenas no próprio schema** — sem acesso a
+`izcloud_core` e sem outros tenants. É assim que o isolamento se mantém nesse
+modelo.
+
+Rotas:
+
+- `POST /api/empresas/migrar-contrato` — roda `aplicarMigracoesTenant()` (para
+  empresas criadas antes das tabelas novas)
+- `POST /api/empresas/credencial-rep` — cria/rotaciona o usuário MySQL e devolve
+  host, porta, usuário e senha **uma única vez**
+
 
 ---
 

@@ -29,7 +29,13 @@ export class IdCloudClient {
 
   // Equipamentos (somente leitura, conforme doc iDCloud)
   async listarEquipamentos() {
-    const [rows] = await this.pool.query('SELECT id_Equipamento, Nome, utc_Equipamento, statusPapel, qtdePessoas, qtdeDigitais, IpAddress, Porta, REPType, ModoConexao FROM equipamentos');
+    // `Serial` pode nao existir em tenant criado antes da migracao do contrato
+    // iDCloud; por isso o COALESCE evita 500 na lista de REPs.
+    const [rows] = await this.pool.query(
+      "SELECT id_Equipamento, COALESCE(Serial, CAST(id_Equipamento AS CHAR)) AS Serial, " +
+      'Nome, utc_Equipamento, statusPapel, qtdePessoas, qtdeDigitais, IpAddress, Porta, REPType, ModoConexao ' +
+      'FROM equipamentos ORDER BY id_Equipamento'
+    );
     return rows;
   }
 

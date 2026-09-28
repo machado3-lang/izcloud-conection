@@ -359,7 +359,7 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
         <div class="glass-card" id="p_cadastro" style="display:none;margin-top:1.5rem;">
           <h3><span id="h-cad"></span> 2. Cadastrar REP na nuvem</h3>
           <div class="row">
-            <div><label class="fld">id_Equipamento</label><input id="c_id" type="number" class="form-input" /></div>
+            <div style="flex:2;"><label class="fld">Número de série (o id do equipamento)</label><input id="c_serial" class="form-input" placeholder="preenchido pelo Sondar" readonly /></div>
             <div><label class="fld">Nome</label><input id="c_nome" class="form-input" /></div>
             <div><label class="fld">IpAddress</label><input id="c_ip" class="form-input" /></div>
             <div><label class="fld">Porta</label><input id="c_porta" class="form-input" /></div>
@@ -1040,6 +1040,7 @@ $('pn_refresh').onclick = carregarPainel;
 $('pn_periodo').onchange = carregarPainel;
 
 // ---------- REPs ----------
+let SERIAL_SONDADO = '';
 $('p_probe').onclick = async () => {
   const out = $('p_probe_out'); out.innerHTML = '';
   if (!temEmpresa()) { setMsg(out, false, 'Selecione uma empresa primeiro.'); return; }
@@ -1047,8 +1048,12 @@ $('p_probe').onclick = async () => {
     const r = await api('/api/reps/probe', { method: 'POST', body: JSON.stringify({ ip: $('p_ip').value, porta: Number($('p_porta').value), usuario: $('p_user').value, senha: $('p_pass').value }) });
     const det = r.portaria ? `<span class="pill c">${r.portaria}</span>` : '<span class="pill am">portaria não detectada</span>';
     out.innerHTML = `<div class="msg ok">Conectado ✔ ${det}<div class="kv" style="margin-top:6px;"><b>Modelo:</b> ${r.modelo || '-'} &nbsp; <b>Serial:</b> ${r.serial || '-'}<br/><b>Firmware:</b> ${r.firmware || '-'} (${r.firmwareHex || '-'}) &nbsp; <b>Facial:</b> ${r.isFacial ? 'sim' : 'não'}<br/><b>Usuários:</b> ${r.usuarios ?? '-'} &nbsp; <b>Templates:</b> ${r.templates ?? '-'}</div></div>`;
-    const maxId = (await api('/api/reps')).reduce((m, x) => Math.max(m, x.id_Equipamento || 0), 0);
-    $('c_id').value = maxId + 1; $('c_nome').value = (r.modelo || 'REP') + (r.serial ? ' ' + r.serial : '');
+    // O id do cadastro e' o SERIAL do aparelho: no contrato iDCloud o REP se
+    // reconhece lendo `equipamentos` e casando id_Equipamento com ele mesmo.
+    SERIAL_SONDADO = r.serial || '';
+    $('c_serial').value = SERIAL_SONDADO;
+    $('c_serial').readOnly = true;
+    $('c_nome').value = (r.modelo || 'REP') + (r.serial ? ' ' + r.serial : '');
     $('c_ip').value = $('p_ip').value; $('c_porta').value = $('p_porta').value; $('c_pass').value = $('p_pass').value;
     if (r.portaria) $('c_tipo').value = r.portaria;
     $('p_cadastro').style.display = 'block';
@@ -1056,8 +1061,9 @@ $('p_probe').onclick = async () => {
 };
 $('c_save').onclick = async () => {
   try {
-    await api('/api/reps', { method: 'POST', body: JSON.stringify({ id_Equipamento: Number($('c_id').value), Nome: $('c_nome').value, IpAddress: $('c_ip').value, Porta: Number($('c_porta').value), Passcode: $('c_pass').value, REPType: $('c_tipo').value, ModoConexao: $('c_modo').value }) });
-    toast('REP cadastrado.', 'success'); loadReps();
+    if (!SERIAL_SONDADO) { toast('Sondar o REP primeiro — o cadastro usa o número de série do aparelho.', 'error'); return; }
+    const r = await api('/api/reps', { method: 'POST', body: JSON.stringify({ serial: SERIAL_SONDADO, Nome: $('c_nome').value, IpAddress: $('c_ip').value, Porta: Number($('c_porta').value), Passcode: $('c_pass').value, REPType: $('c_tipo').value, ModoConexao: $('c_modo').value }) });
+    toast('REP cadastrado com o id ' + r.id_Equipamento + '.', 'success'); loadReps();
   } catch (e) { toast(e.message, 'error'); }
 };
 async function loadReps() {
@@ -1070,7 +1076,9 @@ async function loadReps() {
       rows.map(r => {
         const modo = r.ModoConexao || 'nuvem_puxa';
         const modoPill = modo === 'rep_empurra' ? '<span class="pill am">rep_empurra</span>' : '<span class="pill c">nuvem_puxa</span>';
-        return `<tr><td>${r.id_Equipamento}</td><td>${r.Nome || '-'}</td><td>${r.IpAddress || '-'}:${r.Porta ?? '-'}</td><td>${r.REPType ? `<span class="pill c">${r.REPType}</span>` : '-'}</td><td>${modoPill}</td><td>${r.qtdePessoas ?? '-'}</td><td>${r.qtdeDigitais ?? '-'}</td></tr>`;
+        return `<tr><td>${r.id_Equipamento}</td><td><b>${r.Nome || '-'}</b>
+          <div class="muted" style="font-size:.72rem">série ${r.Serial || '-'}</div></td>
+          <td>${r.IpAddress || '-'}:${r.Porta ?? '-'}</td><td>${r.REPType ? `<span class="pill c">${r.REPType}</span>` : '-'}</td><td>${modoPill}</td><td>${r.qtdePessoas ?? '-'}</td><td>${r.qtdeDigitais ?? '-'}</td></tr>`;
       }).join('') + '</tbody></table></div>';
   } catch (e) { box.innerHTML = '<div class="msg err">' + e.message + '</div>'; }
 }

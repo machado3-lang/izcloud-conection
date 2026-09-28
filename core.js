@@ -278,6 +278,107 @@ async function runScript(pool, sql) {
   }
 }
 
+// Tabelas/colunas do contrato iDCloud que entraram depois do primeiro deploy.
+// Roda em todo boot de empresa, idempotente (ver sqlStatements + a guarda de
+// duplicados abaixo). Sem isso, um tenant criado antes dessas tabelas ficaria
+// incompleto para o REP ler.
+const TENANT_EXTRAS = {
+  empregadores: `CREATE TABLE IF NOT EXISTS empregadores (
+    id_Empregador INT AUTO_INCREMENT PRIMARY KEY,
+    RazaoSocial VARCHAR(50), Local VARCHAR(100),
+    CNPJ_CPF VARCHAR(20), CEI VARCHAR(20), CPF VARCHAR(20))`,
+  departamentos: `CREATE TABLE IF NOT EXISTS departamentos (
+    id_departamento INT AUTO_INCREMENT PRIMARY KEY,
+    nome VARCHAR(50), todos BIT DEFAULT 0)`,
+  departamentos_equip: `CREATE TABLE IF NOT EXISTS departamentos_equip (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    id_departamento INT NOT NULL, id_Equipamento INT NOT NULL,
+    UNIQUE KEY uq_dep_equip (id_departamento, id_Equipamento))`,
+};
+
+export async function aplicarMigracoesTenant(schema) {
+  const pool = getTenantPool(schema);
+  const aplicados = [];
+
+  for (const [nome, ddl] of Object.entries(TENANT_EXTRAS)) {
+    const [t] = await pool.query(`SHOW TABLES LIKE '${nome}'`);
+    if (t.length) continue;
+    await pool.query(ddl);
+    aplicados.push(nome);
+  }
+
+  // Colunas novas
+  const colunas = [
+    ['equipamentos', 'Serial', 'VARCHAR(32)'],
+    ['equipamentos', 'id_Empregador', 'INT'],
+    ['templates', 'Template', 'LONGTEXT'],
+    ['pessoas', 'Excluido', 'BIT DEFAULT 0'],
+    ['pessoas', 'ExcluidoDefinitivo', 'BIT DEFAULT 0'],
+    ['pessoas', 'id_departamento', 'INT'],
+    ['pessoas', 'DataAtualizacao', 'DATETIME'],
+  ];
+  for (const [tabela, coluna, tipo] of colunas) {
+    const [ex] = await pool.query(
+      'SELECT COUNT(*) AS n FROM information_schema.COLUMNS ' +
+      'WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+      [schema, tabela, coluna]
+    );
+    if (ex[0].n === 0) {
+      await pool.query(`ALTER TABLE \`${tabela}\` ADD COLUMN \`${coluna}\` ${tipo}`);
+      aplicados.push(`${tabela}.${coluna}`);
+    }
+  }
+
+  // id_Equipamento precisa ser BIGINT em TODA tabela que o referencia: um serial
+  // real tem 17 digitos (ex.: 00014003750029470) e nao cabe em INT (2.147.483.647).
+  // Alargamento e seguro — os valores existentes cabem em BIGINT.
+  const tabelasEquip = ['equipamentos', 'sync_status', 'equip_pessoa', 'afd', 'marcacoes', 'departamentos_equip'];
+  for (const tabela of tabelasEquip) {
+    const [t] = await pool.query(`SHOW TABLES LIKE '${tabela}'`);
+    if (!t.length) continue;
+    const [col] = await pool.query(
+      'SELECT DATA_TYPE FROM information_schema.COLUMNS ' +
+      'WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+      [schema, tabela, 'id_Equipamento']
+    );
+    if (col.length && col[0].DATA_TYPE === 'int') {
+      // PRIMARY KEY e' NOT NULL por definicao; nos demais, a coluna original ja
+      // era NOT NULL ou permite nulo — preservamos a opcao com MODIFY.
+      const [nn] = await pool.query(
+        'SELECT IS_NULLABLE FROM information_schema.COLUMNS ' +
+        'WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+        [schema, tabela, 'id_Equipamento']
+      );
+      const nulo = nn.length && nn[0].IS_NULLABLE === 'YES' ? 'NULL' : 'NOT NULL';
+      await pool.query(`ALTER TABLE \`${tabela}\` MODIFY id_Equipamento BIGINT ${nulo}`);
+      aplicados.push(`${tabela}.id_Equipamento -> BIGINT`);
+    }
+  }
+
+  // Regra do Inmetro citada na doc do iDCloud: nao pode haver dois cartoes
+  // (RFID) iguais em `pessoas`. Varias linhas com NULL continuam valendo.
+  const [idx] = await pool.query(
+    'SELECT COUNT(*) AS n FROM information_schema.STATISTICS ' +
+    'WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+    [schema, 'pessoas', 'Rfid']
+  );
+  const [dup] = await pool.query(
+    'SELECT Rfid, COUNT(*) AS c FROM pessoas WHERE Rfid IS NOT NULL GROUP BY Rfid HAVING c > 1'
+  );
+  if (!idx[0].n) {
+    if (dup.length) {
+      console.error(`[migracao-tenant] ${schema}: ${dup.length} RFID(s) repetido(s) — ` +
+        'indice unico de Rfid NAO criado. Resolva antes de conectar um REP.');
+    } else {
+      await pool.query('ALTER TABLE pessoas ADD UNIQUE KEY uq_rfid (Rfid)');
+      aplicados.push('pessoas.uq_rfid');
+    }
+  }
+
+  if (aplicados.length) console.log(`[migracao-tenant] ${schema}: ${aplicados.join(', ')}`);
+  return aplicados;
+}
+
 // ---- CRUD de clientes (tenants) ----
 // ---- Conta do cliente do iZCloud (login web; pode ter varias empresas) ----
 export async function criarConta({ login, senha, nome, papel = 'cliente', criado_por = null }) {
@@ -374,6 +475,11 @@ export async function criarEmpresa({ id_conta, login, senha, nome_empresa, razao
   await core.query(`CREATE DATABASE IF NOT EXISTS \`${schema}\``);
   const tp = getTenantPool(schema);
   await runScript(tp, fs.readFileSync(path.join(__dirname, 'schema_tenant.sql'), 'utf-8'));
+  // O runScript acima ja cria o schema completo; ainda assim, por seguranca
+  // (e para tenants antigos), roda as migrating de contrato iDCloud.
+  try { await aplicarMigracoesTenant(schema); } catch (e) {
+    console.error(`[tenant] ${schema}: migracoes de contrato iDCloud falharam:`, e.message);
+  }
   return { id_cliente: id, schema, login };
 }
 
@@ -408,7 +514,52 @@ export async function criarCliente({ login, senha, nome_empresa, cnpj, id_conta 
   await core.query(`CREATE DATABASE IF NOT EXISTS \`${schema}\``);
   const tp = getTenantPool(schema);
   await runScript(tp, fs.readFileSync(path.join(__dirname, 'schema_tenant.sql'), 'utf-8'));
+  try { await aplicarMigracoesTenant(schema); } catch (e) {
+    console.error(`[tenant] ${schema}: migracoes de contrato iDCloud falharam:`, e.message);
+  }
   return { id_cliente: id, schema, login };
+}
+
+// Cria (ou rotaciona) o usuario MySQL que o REP usara para se conectar
+// diretamente no banco desta empresa, como no iDCloud oficial.
+//
+// Por que existe: o REP nao faz HTTP — ele abre um socket MySQL. Cada empresa
+// recebe um usuario proprio, com GRANT apenas no proprio schema: e o que
+// substitui o isolamento por "um banco so".
+//
+// O host/porta sao os do MySQL publico da nuvem (Railway MYSQL_PUBLIC_URL, ou o
+// da VPS). O REP so aceita IPv4 literal no campo iDCloud, entao o endereco
+// publico precisa estar em IP estavel.
+export async function gerarCredencialRep(id_cliente, { usuario, pool } = {}) {
+  const core = pool || getCorePool();
+  const [rows] = await core.query('SELECT id_cliente, schema_name FROM clientes WHERE id_cliente = ?', [id_cliente]);
+  if (!rows.length) throw new Error('Empresa nao encontrada');
+  const schema = rows[0].schema_name;
+  if (!/^tenant_\d{1,10}$/.test(schema || '')) throw new Error('Schema de tenant invalido: ' + schema);
+
+  // Nome derivado do schema: nao aceita entrada do usuario como identificador
+  // de objeto MySQL (evita injecao de SQL no GRANT/REVOKE).
+  const sufixo = schema.replace('tenant_', '').padStart(4, '0');
+  const nomeUsuario = String(usuario || `rep_${sufixo}`).replace(/[^A-Za-z0-9_]/g, '').slice(0, 32);
+  if (!nomeUsuario) throw new Error('Usuario invalido');
+
+  const senha = crypto.randomBytes(12).toString('base64url').slice(0, 16);
+  // Substitui a senha se o usuario ja existia (rotacao).
+  await core.query(`CREATE USER IF NOT EXISTS ?@'%' IDENTIFIED BY ?`, [nomeUsuario, senha]);
+  await core.query(`ALTER USER ?@'%' IDENTIFIED BY ?`, [nomeUsuario, senha]);
+  // ONLY o schema da empresa. Sem acesso a izcloud_core e sem outros tenants.
+  await core.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON \`${schema}\`.* TO ?@'%'`, [nomeUsuario]);
+  await core.query('FLUSH PRIVILEGES');
+
+  return {
+    empresa: schema,
+    usuario: nomeUsuario,
+    senha,
+    host: process.env.MYSQL_PUBLIC_HOST || 'IP_PUBLICO_DO_MYSQL',
+    porta: Number(process.env.MYSQL_PUBLIC_PORT || 3306),
+    observacao: 'Troque host/porta pelo endereco publico real do MySQL. ' +
+      'O REP aceita apenas IPv4 literal no campo iDCloud.',
+  };
 }
 
 export async function verificarCredenciais(login, senha) {
