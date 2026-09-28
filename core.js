@@ -482,13 +482,15 @@ export async function listarClientes() {
 // =====================================================================
 
 // Lista todas as contas da plataforma + quantas empresas cada uma tem.
+// O alias do GROUP_CONCAT nao pode ser `schemas`: SCHEMAS e palavra reservada
+// no MySQL 8 e o servidor responde com erro de sintaxe perto do alias.
 export async function listarContas() {
   const core = getCorePool();
   const [rows] = await core.query(
     `SELECT c.id_conta, c.login, c.nome, c.papel, c.ativo, c.criado_em, c.ultimo_login,
             (SELECT COUNT(*) FROM clientes e WHERE e.id_conta = c.id_conta) AS n_empresas,
             (SELECT COALESCE(GROUP_CONCAT(e.schema_name ORDER BY e.id_cliente), '')
-               FROM clientes e WHERE e.id_conta = c.id_conta) AS schemas
+               FROM clientes e WHERE e.id_conta = c.id_conta) AS schemas_csv
        FROM contas c ORDER BY c.papel DESC, c.id_conta`
   );
   return rows.map((r) => ({
@@ -500,7 +502,7 @@ export async function listarContas() {
     criado_em: r.criado_em,
     ultimo_login: r.ultimo_login,
     n_empresas: Number(r.n_empresas) || 0,
-    schemas: r.schemas ? String(r.schemas).split(',') : [],
+    schemas: r.schemas_csv ? String(r.schemas_csv).split(',') : [],
   }));
 }
 

@@ -1,4 +1,4 @@
--- schema_core.sql — Banco "core" do iZCloud
+-- schema_core.sql - Banco "core" do iZCloud
 -- Dois niveis:
 --   contas  = login do CLIENTE do iZCloud (quem compra o sistema). Uma conta
 --             pode ter VARIAS empresas (filiais). Cada conta so enxerga as suas.
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS clientes (
   id_cliente        INT AUTO_INCREMENT PRIMARY KEY,
   id_conta          INT,                       -- dono (contas.id_conta)
   login             VARCHAR(64) UNIQUE,        -- credencial de API externa (Secullum)
-  senha_hash        VARCHAR(255),              -- "salt:hash" (scrypt) — API externa
+  senha_hash        VARCHAR(255),              -- "salt:hash" (scrypt) - API externa
   schema_name       VARCHAR(64) NOT NULL,      -- ex.: tenant_0007
   razao_social      VARCHAR(160),
   nome_empresa      VARCHAR(120),
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS admin_auditoria (
 );
 
 -- MIGRACOES p/ core ja existente (rode no MySQL da nuvem, ou deixe o app
--- aplicar na subida — core.js:aplicarMigracoes() faz isso de forma idempotente):
+-- aplicar na subida - core.js:aplicarMigracoes() faz isso de forma idempotente):
 -- CREATE TABLE contas ( id_conta INT AUTO_INCREMENT PRIMARY KEY, login VARCHAR(64) NOT NULL UNIQUE,
 --   senha_hash VARCHAR(255) NOT NULL, nome VARCHAR(120), ativo BIT DEFAULT 1, criado_em DATETIME );
 -- ALTER TABLE clientes
@@ -82,6 +82,6 @@ CREATE TABLE IF NOT EXISTS admin_auditoria (
 --   ADD COLUMN endereco VARCHAR(200),
 --   ADD COLUMN responsavel_nome VARCHAR(120),
 --   ADD COLUMN responsavel_cpf VARCHAR(20);
--- (Opcional) vincular empresas ja existentes a uma conta recém-criada:
+-- (Opcional) vincular empresas ja existentes a uma conta recem-criada:
 --   INSERT INTO contas (login, senha_hash, nome) VALUES ('admin', '<hash>', 'Migracao');
 --   UPDATE clientes SET id_conta = (SELECT id_conta FROM contas WHERE login='admin') WHERE id_conta IS NULL;

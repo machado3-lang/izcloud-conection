@@ -1,4 +1,4 @@
--- schema_tenant.sql — Tabelas de UM cliente (executado dentro do schema tenant_XXXX)
+-- schema_tenant.sql - Tabelas de UM cliente (executado dentro do schema tenant_XXXX)
 -- Sem CREATE DATABASE / USE: o core cria o schema e roda este script dentro dele.
 -- Espelha o modelo iDCloud (ControlID), confinado ao tenant.
 
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS equip_pessoa (
 
 -- AFD (somente leitura pela nuvem; o REP escreve). Dado = linha crua.
 -- UNIQUE (id_Equipamento, NSR) garante idempotencia do ON DUPLICATE KEY UPDATE
--- (sem isso, sincronizacoes repetidas duplicariam marcações).
+-- (sem isso, sincronizacoes repetidas duplicariam marcacoes).
 CREATE TABLE IF NOT EXISTS afd (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   id_Equipamento INT NOT NULL,

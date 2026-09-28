@@ -217,16 +217,20 @@ Docker):
 | `.tmp-authtest/test.mjs` | o bypass de login, rate limit, validações, token forjado |
 | `.tmp-admintest/test.mjs` | `authAdmin`: quem entra, quem não, efeito imediato do rebaixamento |
 | `.tmp-e2e/test.mjs` | **o app real contra um driver MySQL falso**: bootstrap, criar conta + empresa, isolamento cliente/admin, validações, reset de senha, desativar, proteção do último admin, auditoria, telas, recuperação sem admin |
+| `.tmp-sqlguard/test.mjs` | **SQL sem MySQL**: alias e nome de tabela contra as palavras reservadas do MySQL 8, `.sql` em ASCII, statements válidos |
 
 ```bash
 Copy-Item auth.js .tmp-authtest\auth.js -Force; node .tmp-authtest\test.mjs
 Copy-Item auth.js .tmp-admintest\auth.js -Force; node .tmp-admintest\test.mjs
 node .tmp-e2e\test.mjs
+node .tmp-sqlguard\test.mjs
 ```
 
 > O `.tmp-e2e` copia o app para `.tmp-e2e/app` e injeta um `mysql2/promise.js`
-> falso. Ele valida a **lógica** (SQL, wiring, regras), **não** a sintaxe SQL
-> contra um MySQL real — a primeira validação de verdade é o deploy.
+> falso. Ele valida a **lógica** (wiring, regras, fluxo), **não** a sintaxe SQL
+> — para isso existe a suíte `.tmp-sqlguard`. Ainda assim, a primeira validação
+> de sintaxe contra um MySQL real é o deploy: as duas juntas já cobriram o que
+> deu errado até aqui.
 
 ---
 

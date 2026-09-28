@@ -852,6 +852,51 @@ Depois entre em `/admin.html` com esse login. **Rode isto depois de trocar o
 
 ---
 
+## 12.17 `SQL syntax error` no painel (2026-09-26)
+
+**Sintoma:** ao abrir `/admin.html`, a tela mostra o erro cru do MySQL:
+
+```
+You have an error in your SQL syntax; ... near 'schemas FROM contas c
+ORDER BY c.papel DESC, c.id_conta' at line 4
+```
+
+**Causa:** `SCHEMAS` é **palavra reservada no MySQL 8**. Eu tinha usado
+`AS schemas` para o `GROUP_CONCAT` dos schemas das empresas em `listarContas()`,
+e o servidor rejeitou a consulta inteira — derrubando `GET /api/admin/panorama`,
+que é a rota que a tela carrega primeiro.
+
+**Correção:** alias renomeado para `schemas_csv` (o JS lê `r.schemas_csv`).
+
+### 12.17.1 Por que o teste não pegou
+
+O `.tmp-e2e` roda o app contra um driver MySQL **falso**, que responde a
+qualquer query e **não valida sintaxe**. Eu tinha avisado essa limitação, e ela
+custou um deploy.
+
+Adicionei a 4ª suíte, `.tmp-sqlguard/test.mjs`, que varre o SQL escrito no
+código — sem precisar de MySQL:
+
+1. todo alias `AS <nome>` contra a lista de palavras reservadas do MySQL 8;
+2. todo nome de tabela (`FROM`/`JOIN`/`UPDATE`/`INTO`/`TABLE`) contra a mesma
+   lista;
+3. `.sql` em ASCII puro (acentos em comentário viram risco de encoding);
+4. todo statement dos `.sql` começa com palavra reservada;
+5. regressão explícita do alias de `listarContas`.
+
+Verificado que a suíte **pega o bug**: revertendo `schemas_csv` para `schemas`,
+ela falha com `alias "schemas" e palavra reservada do MySQL 8`.
+
+### 12.17.2 Bônus: ASCII nos `.sql`
+
+`schema_core.sql` e `schema_tenant.sql` tinham `—`, `é`, `ç`, `õ` dentro de
+comentários. Removidos: o arquivo é enviado ao MySQL como está, e depender do
+`charset` da conexão para um caractere em comentário não vale o risco.
+
+Total: 20 + 16 + 47 + 11 asserções, 4 suítes, 5 cenários, todas passando.
+
+---
+
 ## 13. Deploy no Railway (definido)
 
 Decisão: subir no **Railway** a partir deste repo GitHub (Oracle Cloud Free foi
