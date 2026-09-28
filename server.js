@@ -11,7 +11,7 @@ import { IdCloudClient } from './idcloud.js';
 import { gerarPorPeriodo } from './afd.js';
 import { sincronizarAfd, iniciarPoller } from './sync.js';
 import { getCorePool, getTenantPool, verificarConexaoCore, inicializarCore, criarCliente, listarClientes, criarUsuario, listarUsuarios, removerUsuario, criarConta, verificarConta, buscarConta, existeAdmin, listarEmpresas, criarEmpresa, atualizarEmpresa, listarContas, atualizarConta, resetarSenhaConta, listarTodasEmpresas, atualizarEmpresaAdmin, auditar, listarAuditoria } from './core.js';
-import { login, authTenant, authConta, authAdmin, requireAdmin, requireTenantAdmin, limiteTentativas, validarLogin, validarSenha } from './auth.js';
+import { login, authTenant, authConta, authAdmin, adminKey, requireAdmin, requireTenantAdmin, limiteTentativas, registrarFalha, limparFalhas, validarLogin, validarSenha } from './auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const AFD_DIR = path.join(__dirname, 'data', 'afd');
@@ -69,7 +69,7 @@ app.get('/api/config', async (_, res) => {
 // Diagnostico de banco. Detalhes de conexao (host/porta) so para quem tem a
 // IZCLOUD_ADMIN_KEY — o endpoint e publico, entao nao pode vazar a topologia
 // interna da nuvem.
-app.get('/api/health/db', requireAdmin, async (_, res) => {
+app.get('/api/health/db', adminKey, async (_, res) => {
   try { res.json(await verificarConexaoCore()); }
   catch (e) { res.status(500).json({ erro: e.message }); }
 });
@@ -97,7 +97,7 @@ const cadastroLiberado = (req, res, next) => {
 
 // Cria empresa para uma conta existente (setup legado; usa x-admin-key).
 // Exige id_conta: empresa sem dono nao aparece na UI e ninguem consegue acessar.
-app.post('/api/auth/register', requireAdmin, async (req, res) => {
+app.post('/api/auth/register', adminKey, async (req, res) => {
   try {
     if (!req.body.id_conta) throw new Error('Informe id_conta da conta que sera a dona da empresa');
     const r = await criarCliente(req.body);
@@ -106,20 +106,26 @@ app.post('/api/auth/register', requireAdmin, async (req, res) => {
 });
 
 // Lista clientes (admin)
-app.get('/api/auth/clientes', requireAdmin, async (_, res) => {
+app.get('/api/auth/clientes', adminKey, async (_, res) => {
   try { res.json(await listarClientes()); } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
 // Login -> JWT (conta ou operador) + lista de empresas.
-app.post('/api/auth/login', limiteTentativas('login'), async (req, res) => {
+app.post('/api/auth/login', limiteTentativas('login', 'login'), async (req, res) => {
+  const chave = res.locals.chaveFalha;
   try {
-    res.json(await login(req.body.login, req.body.senha));
+    const r = await login(req.body.login, req.body.senha);
+    // Deu certo: zera a contagem de falhas. Sem isso, 8 logins BEM-SUCEDIDOS
+    // em 15 min travavam o usuario com "Muitas tentativas".
+    limparFalhas(chave);
+    res.json(r);
   } catch (e) {
     // Erros de validacao de formato sao uteis ao usuario; erro de credencial
     // e sempre a mesma frase (nao revela se o login existe). Qualquer outra
     // coisa (MySQL fora, bug) e logada: sem isso, um erro interno chega ao
     // usuario como "senha errada" e nao ha como diagnosticar.
     if (/^(Login invalido|Senha deve|Senha muito|Credenciais invalidas)/.test(e.message)) {
+      registrarFalha(chave); // so credencial errada conta como tentativa
       return res.status(401).json({ error: e.message });
     }
     console.error('[auth] erro inesperado no login:', detalheErro(e));
@@ -129,7 +135,8 @@ app.post('/api/auth/login', limiteTentativas('login'), async (req, res) => {
 
 // Cria a CONTA do cliente e (opcionalmente) a 1a empresa.
 // Fechado por padrao: exige IZCLOUD_SIGNUP_ABERTA=true ou x-admin-key.
-app.post('/api/auth/registro', cadastroLiberado, limiteTentativas('registro'), async (req, res) => {
+app.post('/api/auth/registro', cadastroLiberado, limiteTentativas('registro', 'cadastro'), async (req, res) => {
+  const chave = res.locals.chaveFalha;
   try {
     const { login: loginU, senha, nome, empresa } = req.body;
     if (!loginU || !senha) throw new Error('Informe login e senha');
@@ -141,8 +148,13 @@ app.post('/api/auth/registro', cadastroLiberado, limiteTentativas('registro'), a
       validarSenha(empresa.senha);
       await criarEmpresa({ id_conta: c.id_conta, ...empresa });
     }
-    res.json(await login(loginU, senha));
-  } catch (e) { res.status(400).json({ error: e.message }); }
+    const r = await login(loginU, senha);
+    limparFalhas(chave);
+    res.json(r);
+  } catch (e) {
+    registrarFalha(chave);
+    res.status(400).json({ error: e.message });
+  }
 });
 
 // ---------- Empresas (escopo da CONTA) ----------
@@ -187,7 +199,7 @@ app.put('/api/empresas/:id', async (req, res) => {
 //   curl -X POST .../api/admin/bootstrap -H "x-admin-key: $IZCLOUD_ADMIN_KEY" \
 //        -H "Content-Type: application/json" \
 //        -d '{"login":"admin","senha":"<forte>","nome":"Antonio"}'
-app.post('/api/admin/bootstrap', requireAdmin, async (req, res) => {
+app.post('/api/admin/bootstrap', adminKey, async (req, res) => {
   try {
     const { login: loginU, senha, nome } = req.body;
     if (!loginU || !senha) throw new Error('Informe login e senha');

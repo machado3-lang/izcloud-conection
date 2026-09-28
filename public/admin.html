@@ -76,6 +76,10 @@ label.fld { display: block; font-size: .8rem; color: var(--text-secondary); marg
 .form-input:focus { border-color: var(--accent-primary); }
 .form-input::placeholder { color: var(--text-muted); }
 select.form-input option { background: var(--bg-secondary); }
+/* Senha gerada: precisa ser LEGIVEL — o admin vai entregar ao cliente. */
+.senha-box { display: flex; gap: .4rem; align-items: center; }
+.senha-box .form-input { flex: 1; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; letter-spacing: .3px; }
+.senha-box .btn-ghost { white-space: nowrap; padding: .5rem .7rem; }
 .btn-primary {
   background: var(--accent-gradient); color: #fff; border: none; padding: .7rem 1.4rem;
   border-radius: var(--radius-full); font-weight: 600; font-size: .9rem; cursor: pointer;
@@ -194,8 +198,18 @@ select.form-input option { background: var(--bg-secondary); }
       <div><label class="fld">Nome</label><input id="c_nome" class="form-input" placeholder="João da Silva" /></div>
     </div>
     <div class="row">
-      <div><label class="fld">Senha inicial</label><input id="c_senha" type="password" class="form-input" /></div>
-      <div style="display:flex;align-items:flex-end;"><button class="btn-ghost" id="c_gerar" type="button" style="margin-bottom:1px;">Gerar senha</button></div>
+      <div style="flex:2;">
+        <label class="fld">Senha inicial</label>
+        <div class="senha-box">
+          <input id="c_senha" class="form-input" placeholder="clique em Gerar" autocomplete="new-password" />
+          <button class="btn-ghost" id="c_gerar" type="button">Gerar</button>
+          <button class="btn-ghost" id="c_ver" type="button" title="Mostrar ou ocultar">ver</button>
+          <button class="btn-ghost" id="c_copiar" type="button" title="Copiar">copiar</button>
+        </div>
+        <p class="muted" id="c_senha_dica" style="font-size:.78rem;margin-top:.35rem;">
+          Minimo de 8 caracteres. A senha gerada aparece aqui para voce entregar ao cliente.
+        </p>
+      </div>
     </div>
     <p class="muted" style="font-size:.78rem;margin-top:.5rem;">Login: 3–64 caracteres (letras, numeros, . _ -). Senha: minimo 8.</p>
 
@@ -219,7 +233,13 @@ select.form-input option { background: var(--bg-secondary); }
       </div>
       <div class="row">
         <div><label class="fld">Login da empresa (acesso externo)</label><input id="e_login" class="form-input" placeholder="empresa1" /></div>
-        <div><label class="fld">Senha da empresa</label><input id="e_senha" type="password" class="form-input" /></div>
+        <div><label class="fld">Senha da empresa</label>
+          <div class="senha-box">
+            <input id="e_senha" class="form-input" autocomplete="new-password" />
+            <button class="btn-ghost" id="e_gerar" type="button">Gerar</button>
+            <button class="btn-ghost" id="e_ver" type="button" title="Mostrar ou ocultar">ver</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -311,6 +331,49 @@ function gerarSenha() {
   return s;
 }
 function mostrarErro(el, e) { el.className = 'msg err'; el.textContent = e.message || String(e); }
+
+// ---------- senha ----------
+// O admin precisa VER a senha para entregar ao cliente. Entao o campo de senha
+// gerada e texto puro (nunca type=password) e o botao "ver" so faz sentido para
+// uma senha digitada a mao.
+function comSenha(inputId, gerarId, verId, copiarId, dicaId) {
+  const campo = $(inputId);
+  const botaoGerar = $(gerarId);
+  const botaoVer = verId ? $(verId) : null;
+  const botaoCopiar = copiarId ? $(copiarId) : null;
+
+  botaoGerar.onclick = () => {
+    campo.value = gerarSenha();
+    campo.type = 'text'; // sempre visivel: e para ser entregue
+    if (botaoVer) botaoVer.textContent = 'ocultar';
+    if (dicaId) {
+      $(dicaId).innerHTML = 'Senha gerada: <b style="color:var(--text-primary);font-family:ui-monospace,Menlo,Consolas,monospace;">' +
+        campo.value + '</b> — anote e entregue por um canal seguro.';
+    }
+  };
+  if (botaoVer) {
+    botaoVer.onclick = () => {
+      const mostrando = campo.type === 'text';
+      campo.type = mostrando ? 'password' : 'text';
+      botaoVer.textContent = mostrando ? 'ver' : 'ocultar';
+    };
+  }
+  if (botaoCopiar) {
+    botaoCopiar.onclick = async () => {
+      if (!campo.value) return toast('Gere a senha primeiro.', 'error');
+      try {
+        await navigator.clipboard.writeText(campo.value);
+        toast('Senha copiada.', 'success');
+      } catch {
+        // clipboard exige contexto seguro; sem https, mostra para copiar a mao
+        campo.select();
+        toast('Nao consegui copiar automaticamente: a senha esta selecionada, copie com Ctrl+C.', 'warning');
+      }
+    };
+  }
+}
+comSenha('c_senha', 'c_gerar', 'c_ver', 'c_copiar', 'c_senha_dica');
+comSenha('e_senha', 'e_gerar', 'e_ver', null, null);
 
 // ---------- autenticacao / permissao ----------
 $('go_app').onclick = () => { location.href = '/'; };
@@ -577,16 +640,18 @@ function editarSenha(id) {
   const c = DADOS.contas.find((x) => x.id_conta === id);
   abrirEdit('Redefinir senha de ' + c.login, `
     <label class="fld">Nova senha</label>
-    <div style="display:flex;gap:.5rem;">
-      <input id="ed_senha" class="form-input" />
+    <div class="senha-box">
+      <input id="ed_senha" class="form-input" autocomplete="new-password" />
       <button class="btn-ghost" id="ed_gerar" type="button">Gerar</button>
+      <button class="btn-ghost" id="ed_copiar" type="button">copiar</button>
     </div>
-    <p class="muted" style="font-size:.78rem;margin-top:.5rem;">Minimo 8 caracteres. Comunique a nova senha ao cliente por um canal seguro.</p>
+    <p class="muted" id="ed_senha_dica" style="font-size:.78rem;margin-top:.5rem;">Minimo 8 caracteres. Comunique ao cliente por um canal seguro.</p>
   `, async () => {
+    if ($('ed_senha').value.length < 8) throw new Error('A senha deve ter no minimo 8 caracteres');
     await api('/api/admin/contas/' + id + '/senha', { method: 'POST', body: JSON.stringify({ senha: $('ed_senha').value }) });
-    toast('Senha redefinida.', 'success');
+    toast('Senha redefinida para ' + c.login + '.', 'success');
   });
-  $('ed_gerar').onclick = () => { $('ed_senha').value = gerarSenha(); };
+  comSenha('ed_senha', 'ed_gerar', null, 'ed_copiar', 'ed_senha_dica');
 }
 
 function novaEmpresa(idConta) {
@@ -604,7 +669,12 @@ function novaEmpresa(idConta) {
     </div>
     <div class="row">
       <div><label class="fld">Login da empresa (acesso externo)</label><input id="ne_login" class="form-input" placeholder="empresa2" /></div>
-      <div><label class="fld">Senha da empresa</label><input id="ne_senha" class="form-input" /></div>
+      <div><label class="fld">Senha da empresa</label>
+        <div class="senha-box">
+          <input id="ne_senha" class="form-input" autocomplete="new-password" />
+          <button class="btn-ghost" id="ne_gerar" type="button">Gerar</button>
+        </div>
+      </div>
     </div>
     <p class="muted" style="font-size:.78rem;margin-top:.5rem;">A empresa recebe um schema proprio (tenant_XXXX), isolado das demais.</p>
   `, async () => {
@@ -615,6 +685,7 @@ function novaEmpresa(idConta) {
     }) });
     toast('Empresa criada: ' + r.schema, 'success');
   });
+  comSenha('ne_senha', 'ne_gerar', null, null, null);
 }
 
 function editarEmpresa(id) {
@@ -649,7 +720,6 @@ $('btn_nova').onclick = () => {
     .forEach((k) => { if ($(k)) $(k).value = ''; });
 };
 $('c_cancel').onclick = () => $('mConta').classList.add('hidden');
-$('c_gerar').onclick = () => { $('c_senha').value = gerarSenha(); };
 $('c_com_empresa').onchange = () => {
   $('c_empresa_bloco').classList.toggle('hidden', !$('c_com_empresa').checked);
 };

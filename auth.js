@@ -48,50 +48,80 @@ export function validarSenha(senha) {
 }
 
 // ---- Limitador de tentativas (em memoria; por processo) ----
-// Protege login e rotas com IZCLOUD_ADMIN_KEY contra forca bruta.
-const LIMITE = Number(process.env.IZCLOUD_LOGIN_MAX_TENTATIVAS || 8);
+//
+// REGRA: conta FALHA, nao tentativa. Um login que da certo tem de zerar a
+// contagem — senao um usuario que acerta a senha 8 vezes em 15 min (testando,
+// abrindo em outra aba, trocando de conta) fica trancado do mesmo jeito que um
+// atacante.
+//
+//   limiteTentativas(p)  -> middleware que SÓ barra (nao consome)
+//   registrarFalha(req)  -> a rota chama quando a autenticacao falha
+//   limparFalhas(req)    -> a rota chama quando da certo
+//
+// O middleware nao pode consumir: ele roda ANTES da rota e nao sabe o resultado.
+const LIMITE = Number(process.env.IZCLOUD_LOGIN_MAX_TENTATIVAS || 10);
 const JANELA_MS = Number(process.env.IZCLOUD_LOGIN_JANELA_MS || 15 * 60 * 1000);
 const MAX_CHAVES = 20000;
-const _tentativas = new Map();
+const _falhas = new Map();
 
-// Consome uma tentativa. Devolve { ok, restantes } ou { ok:false, retryAfter }.
-export function consumirTentativa(chave) {
-  const agora = Date.now();
-  if (_tentativas.size >= MAX_CHAVES) {
-    for (const [k, v] of _tentativas) if (agora > v.ate) _tentativas.delete(k);
-    if (_tentativas.size >= MAX_CHAVES) _tentativas.clear();
-  }
-  const r = _tentativas.get(chave);
-  if (!r || agora > r.ate) {
-    _tentativas.set(chave, { n: 1, ate: agora + JANELA_MS });
-    return { ok: true, restantes: LIMITE - 1 };
-  }
-  r.n += 1;
-  if (r.n > LIMITE) return { ok: false, retryAfter: Math.ceil((r.ate - agora) / 1000) };
-  return { ok: true, restantes: LIMITE - r.n };
-}
+const chaveDe = (prefixo, req) => `${prefixo}:${req.ip || 'desconhecido'}`;
 
-export function limparTentativas(chave) {
-  _tentativas.delete(chave);
-}
-
-// Middleware de limite. `prefixo` separa contadores (ex.: 'login', 'adminkey').
-export function limiteTentativas(prefixo) {
-  return (req, res, next) => {
-    const r = consumirTentativa(`${prefixo}:${req.ip || 'desconhecido'}`);
-    if (!r.ok) {
-      res.setHeader('Retry-After', String(r.retryAfter));
-      return res.status(429).json({ error: `Muitas tentativas. Tente novamente em ${Math.ceil(r.retryAfter / 60)} min.` });
-    }
-    next();
+// Consulta sem efeito colateral. { bloqueado, retryAfter, restantes }
+export function consultarFalhas(chave) {
+  const r = _falhas.get(chave);
+  if (!r || Date.now() > r.ate) return { bloqueado: false, retryAfter: 0, restantes: LIMITE };
+  const n = r.n;
+  return {
+    bloqueado: n >= LIMITE,
+    retryAfter: Math.ceil((r.ate - Date.now()) / 1000),
+    restantes: Math.max(0, LIMITE - n),
   };
 }
 
-// setInterval nao segura o processo ao encerrar.
+export function registrarFalha(chave) {
+  const agora = Date.now();
+  if (_falhas.size >= MAX_CHAVES) {
+    for (const [k, v] of _falhas) if (agora > v.ate) _falhas.delete(k);
+    if (_falhas.size >= MAX_CHAVES) _falhas.clear();
+  }
+  const r = _falhas.get(chave);
+  if (!r || agora > r.ate) _falhas.set(chave, { n: 1, ate: agora + JANELA_MS });
+  else r.n = Math.min(r.n + 1, LIMITE + 1);
+  return consultarFalhas(chave);
+}
+
+export function limparFalhas(chave) {
+  if (chave) _falhas.delete(chave);
+}
+
+// Atalho usado nos testes e em rotas que nao recebem `req`.
+export function consumirTentativa(chave) {
+  return registrarFalha(chave);
+}
+
 setInterval(() => {
   const agora = Date.now();
-  for (const [k, v] of _tentativas) if (agora > v.ate) _tentativas.delete(k);
+  for (const [k, v] of _falhas) if (agora > v.ate) _falhas.delete(k);
 }, 60000).unref();
+
+// Middleware: barra se ja ha falhas demais. NAO consome slot — quem consome e
+// `registrarFalha`, chamado pela rota so quando a autenticacao falha mesmo.
+export function limiteTentativas(prefixo, rotulo = 'login') {
+  return (req, res, next) => {
+    const chave = chaveDe(prefixo, req);
+    const st = consultarFalhas(chave);
+    if (st.bloqueado) {
+      res.setHeader('Retry-After', String(st.retryAfter));
+      const minutos = Math.max(1, Math.ceil(st.retryAfter / 60));
+      return res.status(429).json({
+        error: `Muitas tentativas de ${rotulo} sem sucesso. Tente novamente em ${minutos} min.`,
+        retryAfter: st.retryAfter,
+      });
+    }
+    res.locals.chaveFalha = chave;
+    next();
+  };
+}
 
 // ---- Login WEB ----
 export async function login(loginU, senha) {
@@ -256,17 +286,24 @@ export function requireTenantAdmin(req, res, next) {
 }
 
 // Protege rotas de setup/administracao. Use IZCLOUD_ADMIN_KEY no header
-// `x-admin-key`. A comparacao e em tempo constante.
+// `x-admin-key`. A comparacao e em tempo constante. As rotas devem vir
+// acompanhadas de `limiteTentativas('adminkey')` — aqui so registramos a falha.
 export function requireAdmin(req, res, next) {
   const enviada = req.headers['x-admin-key'];
   const a = Buffer.from(String(enviada || ''));
   const b = Buffer.from(ADMIN_KEY || '');
   const ok = ADMIN_KEY && a.length === b.length && crypto.timingSafeEqual(a, b);
   if (!ok) {
-    consumirTentativa(`adminkey:${req.ip || 'desconhecido'}`);
+    if (res.locals.chaveFalha) registrarFalha(res.locals.chaveFalha);
     return res.status(403).json({ error: 'Forbidden' });
   }
   next();
+}
+
+// Versao ja com limite aplicado, para nao esquecer a ordem.
+const limiteAdminKey = limiteTentativas('adminkey', 'chave de setup');
+export function adminKey(req, res, next) {
+  return limiteAdminKey(req, res, () => requireAdmin(req, res, next));
 }
 
 export { getCorePool };

@@ -897,6 +897,66 @@ Total: 20 + 16 + 47 + 11 asserções, 4 suítes, 5 cenários, todas passando.
 
 ---
 
+## 12.18 "Muitas tentativas" na 1ª tentativa + senha gerada invisível (2026-09-26)
+
+### 12.18.1 O rate limit bloqueava quem acertava a senha
+
+**Sintoma:** o admin criou a conta de um cliente e, na **primeira** tentativa de
+login desse cliente, veio `Muitas tentativas. Tente novamente em 2 min.`
+
+**Causa:** o limitador consumia um slot por **requisição** e nunca era zerado:
+
+- `limiteTentativas()` era middleware, então rodava **antes** da rota — não
+  tinha como saber se o login ia dar certo;
+- `limparTentativas()` existia no código, era exportada… e **nunca era chamada**;
+- logo, **logins bem-sucedidos** contavam como tentativa. Bastavam 8 logins
+  certos em 15 minutos (testar, abrir em outra aba, trocar de conta, usar em
+  dois navegadores) para ser trancado com a mensagem de "muitas tentativas".
+
+**Correção:** a semântica virou "conta **falha**, não requisição".
+
+| Item | Onde | O que foi feito |
+|---|---|---|
+| Contador por falha | `auth.js` | `limiteTentativas()` só **barra** (não consome). Quem consome é `registrarFalha()`, chamado pela rota **só** quando a autenticação falha |
+| Sucesso zera | `server.js` | login certo chama `limparFalhas()` |
+| Erro interno não conta | `server.js` | 503 (MySQL fora) não vira "tentativa" — senão uma falha de banco tranca o usuário |
+| Chave de setup | `auth.js`/`server.js` | `adminKey` = limite + `requireAdmin`. Antes o contador_existia mas **nada consultava** o limite: a rota nunca era bloqueada de fato |
+| Mensagem | `auth.js` | "Muitas tentativas de login **sem sucesso**" + `retryAfter` no corpo |
+| Limite | `auth.js` | 8 → 10, e configurável (`IZCLOUD_LOGIN_MAX_TENTATIVAS`) |
+
+### 12.18.2 "Gerar senha" não mostrava a senha
+
+O campo era `type="password"` e o botão só preenchia o valor — o admin via
+bolinhas e não tinha como entregar a credencial ao cliente.
+
+Agora, em todo o painel (nova conta, nova empresa, reset de senha): **Gerar**
+preenche e **revela** em texto puro, com **copiar** e **ver/ocultar**, e a
+senha aparece escrita abaixo do campo para ser anotada.
+
+### 12.18.3 Dois bugs que o teste novo achou no `index.html`
+
+Escrevi a checagem "todo `getElementById` tem elemento no HTML" na suíte
+`.tmp-sqlguard` e ela falhou de cara:
+
+1. **`mountIcons()` referenciava `h-pessoa`, que não existe no HTML.** Um
+   `null.innerHTML` estourava o script **inteiro** a partir dali — inclusive o
+   `applyAuth()` da linha seguinte. Corrigido, e `mountIcons()` passou a iterar
+   um mapa e avisar no console em vez de derrubar a página.
+2. **O botão "Cancelar" do modal de empresa nunca funcionava:** o HTML tem
+   `id="em_cancel"` e o JS procurava `emp_cancel`.
+
+### 12.18.4 Testes
+
+| Onde | O que garante |
+|---|---|
+| `.tmp-authtest` §5 | 25 requisições sem falha não bloqueiam; N falhas bloqueiam a próxima; `limparFalhas` zera |
+| `.tmp-e2e` §21 | **15 logins com senha correta em sequência → todos 200** (o bug reportado); senhas erradas repetidas → 429 |
+| `.tmp-sqlguard` §6–7 | script inline das telas com sintaxe válida; todo `getElementById` tem elemento |
+
+Total: 21 + 16 + 49 + 16 asserções, 4 suítes, 5 cenários, todas passando.
+
+---
+
 ## 13. Deploy no Railway (definido)
 
 Decisão: subir no **Railway** a partir deste repo GitHub (Oracle Cloud Free foi

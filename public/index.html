@@ -479,27 +479,25 @@ const ICONS = {
 function ic(name, size = 18) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ''}</svg>`;
 }
+// Monta os icones por id. Tolerante a id inexistente de proposito: antes, um
+// unico `$('id')` de volta quebrava o script INTEIRO a partir dai — inclusive o
+// `applyAuth()` seguinte, e a tela ficava meio montada sem aviso no console.
 function mountIcons() {
-  $('brand-ico').innerHTML = ic('cloud', 18);
-  $('login-brand').innerHTML = ic('cloud', 22);
-  $('l-ico-user').innerHTML = ic('user', 16);
-  $('l-ico-lock').innerHTML = ic('lock', 16);
-  $('ni-reps').innerHTML = ic('server', 18);
-  $('ni-pessoas').innerHTML = ic('users', 18);
-  $('ni-afd').innerHTML = ic('clock', 18);
-  $('ni-usuarios').innerHTML = ic('user', 18);
-  $('ni-out').innerHTML = ic('logout', 18);
-  $('h-probe').innerHTML = ic('radio', 16);
-  $('h-cad').innerHTML = ic('save', 16);
-  $('h-list').innerHTML = ic('list', 16);
-  $('h-pessoa').innerHTML = ic('send', 16);
-  $('h-vinc').innerHTML = ic('users', 16);
-  $('h-add').innerHTML = ic('user', 16);
-  $('h-sync').innerHTML = ic('refresh', 16);
-  $('h-exp').innerHTML = ic('download', 16);
-  $('h-user').innerHTML = ic('user', 16);
-  $('h-sync2').innerHTML = ic('refresh', 16);
-  $('ni-admin').innerHTML = ic('shield', 18);
+  const alvos = {
+    'brand-ico': ['cloud', 18], 'login-brand': ['cloud', 22],
+    'l-ico-user': ['user', 16], 'l-ico-lock': ['lock', 16],
+    'ni-reps': ['server', 18], 'ni-pessoas': ['users', 18], 'ni-afd': ['clock', 18],
+    'ni-usuarios': ['user', 18], 'ni-admin': ['shield', 18], 'ni-out': ['logout', 18],
+    'h-probe': ['radio', 16], 'h-cad': ['save', 16], 'h-list': ['list', 16],
+    'h-vinc': ['users', 16], 'h-add': ['user', 16],
+    'h-sync': ['refresh', 16], 'h-exp': ['download', 16], 'h-user': ['user', 16],
+    'h-sync2': ['refresh', 16],
+  };
+  for (const [id, [nome, tam]] of Object.entries(alvos)) {
+    const el = $(id);
+    if (el) el.innerHTML = ic(nome, tam);
+    else console.warn('[ui] id sem elemento no HTML: ' + id);
+  }
 }
 
 // ---------- helpers ----------
@@ -715,7 +713,7 @@ function abrirEmpModal(e) {
   $('empModal').dataset.id = editando ? e.id_cliente : '';
   $('empModal').classList.remove('hidden');
 }
-$('emp_cancel').onclick = () => $('empModal').classList.add('hidden');
+$('em_cancel').onclick = () => $('empModal').classList.add('hidden');
 $('emp_new').onclick = () => abrirEmpModal(null);
 
 $('em_save').onclick = async () => {
