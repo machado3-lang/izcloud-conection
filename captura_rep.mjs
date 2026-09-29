@@ -47,7 +47,12 @@ PORTAS.forEach((porta) => {
     sock.on('end', () => log(`  <- ${origem} fechou o envio`));
     sock.on('close', () => {
       const todo = Buffer.concat(pedacos);
-      log(`<-- RESUMO porta ${porta} / ${origem}: ${todo.length} bytes`);
+      // Grava os bytes crus: parsear hexdump de log e' fragil (prefixo de
+      // timestamp, truncamento em 256 B) e o ClientHello inteiro e' o que
+      // interessa. O .bin e' a fonte da verdade.
+      const arq = `captura_${new Date().toISOString().replace(/[:.]/g, '-')}_p${porta}.bin`;
+      try { fs.writeFileSync(arq, todo); } catch (e) { log(`  nao consegui gravar ${arq}: ${e.message}`); }
+      log(`<-- RESUMO porta ${porta} / ${origem}: ${todo.length} bytes (salvo em ${arq})`);
       log(`<-- TIPO: ${classificar(todo)}`);
       log('<-- HEX (primeiros 256 B):');
       for (let i = 0; i < Math.min(todo.length, 256); i += 16) {

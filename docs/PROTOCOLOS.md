@@ -676,3 +676,107 @@ Ressalvas honestas:
 
 O `interval` gravado no REP é **2078000**. Se for milissegundos, são ~35 min
 entre tentativas; se for segundos, ~24 dias. Vale descobrir antes de esperar.
+## 11. O canal iDCloud, medido no REP de teste (29/09/2026)
+
+Tudo abaixo foi observado com o REP real em `192.168.100.132`, com o
+`txtIPCloud` apontado para `192.168.100.179` (esta maquina).
+
+### 11.1 O que o REP faz, na ordem
+
+1. Abre conexao TCP na **443** a cada ~30 s. Nenhuma outra porta foi tocada.
+2. Manda um **ClientHello** de 400 bytes. TLS 1.2 puro.
+3. Aceita o handshake com um certificado **autoassado**.
+4. **Nao manda absolutely nada depois do handshake** e espera ~30 s.
+
+Handshake registrado no servidor:
+
+```text
+versao ....: TLSv1.2
+cipher ....: ECDHE-RSA-AES128-GCM-SHA256
+certificado do cliente: (NAO MANDOU)
+SNI (servername): (ausente)
+```
+
+O ClientHello traz 141 cipher suites, `signature_algorithms`,
+`supported_groups`, `ec_point_formats` e `session_ticket` — e **nada** de
+`server_name` nem `ALPN`. Confirma: o REP conecta por IP literal e nao manda SNI.
+
+### 11.2 O REP NAO valida a CA da Control iD
+
+O firmware embute a CA (encontrei a string exata, com as validity):
+
+```text
+2396132  CN=Control iD CA,O=Controlid Industria e Comercio de Hardware e Servicos
+         Ltda,OU=Engenharia,ST=SP,L=Sao Paulo,C=BR
+2396100  20010101000001        (notBefore da CA)
+2396116  20300101000001        (notAfter da CA)
+2396252  [SSL] Novo certificado criado com sucesso!
+2396352  Certificado nao corresponde ao IP atual. Criando novo certificado..
+```
+
+E o certificado que o proprio REP gera (achado no config de 128 KB) e' o
+certificado **do servidor web dele**, CN=`192.168.100.132` — nao credencial de
+iDCloud.
+
+Mesmo assim, o REP **aceitou nosso certificado autoassado** sem reclamar. Ou
+seja: a CA embutida e' usada para o REP gerar o proprio certificado, e o canal
+do iDCloud nao exige cadeia assinada pela Control iD. Consequencia pratica:
+**na VPS podemos usar certificado autoassado**, sem comprar CA.
+
+### 11.3 O servidor e' quem fala primeiro
+
+Depois do handshake o REP fica calado. Mandei seis probes (resposta HTTP 200,
+`{"transactions":[]}`, `{"result":true}`, `{"status":"ok"}`, `{"session":""}`,
+`CID-REP_iDClass:`) e ele nao respondeu a nenhum. O formato do primeiro comando
+do servidor continua desconhecido.
+
+### 11.4 `set_idcloud` existe: da para mexer no intervalo por FCGI
+
+```js
+await fcgi('set_idcloud', { enable: true, interval: 15 });   // -> {}
+// get_idcloud passa a devolver {"enable":true,"interval":15}
+```
+
+`enable` e' obrigatorio; `interval` e' opcional. Isso resolve a limitacao do
+`REPCONFIG.exe`: com `interval: 15` o REP tenta a cada ~30 s, sem esperar as
+horas do 2078000. `https_rep.mjs` e `vigia.mjs` fazem isso e restauram o valor
+no fim.
+
+### 11.5 O hostname oficial — e por que a Railway esta fora
+
+O cliente oficial (`ControliD.iDCloud.LocalService.exe`, que se descreve como
+*"Servidor de sincronismo dos equipamentos REP iDClass da Control iD"*) tem:
+
+```text
+txtHost        -> idclass1.idcloud.com.br     (resolve para 54.233.124.250)
+{{ email = {0}, password = {1} }}
+token / login / accessToken / Authorization / Bearer
+http://localhost/rhidv2/afddownloader.svc/
+application/json
+download?idEquipamento={0}&nsrInicial={1}&limit={2}&coletor={3}
+devices
+```
+
+Ou seja, o iDCloud e' **RHiD v2**: `POST` com JSON de credenciais, devolve
+`accessToken`, e as chamadas seguintes vao com `Authorization: Bearer`.
+
+**Por que a Railway nao serve o REP:**
+
+- o REP nao manda SNI (comprovado) e nao manda `Host` utilizavel;
+- a borda da Railway e' um ingress compartilhado que roteia por SNI/`Host`;
+- o REP so conecta por IPv4 literal, e `txtIPCloud` nao aceita dominio;
+- resultado: TLS fecha (a borda tem certificado), a requisicao morre no
+  roteamento, e o aparelho diz "conectado" porque so viu o handshake.
+
+Isto **confirma a VPS como obrigatoria**, e nao so por causa do IP fixo: e' pelo
+controle da borda. Na VPS aceitamos qualquer `Host` e podemos terminar o TLS
+mesmo, com qualquer certificado.
+
+### 11.6 O que ainda falta
+
+O **formato do primeiro comando do servidor** depois do TLS. Os caminhos
+candidatos vem do RHiD v2 (`/rhidv2/...`, `login`, `Authorization: Bearer`), mas
+isso e' do cliente de desktop — o firmware nao contem `rhidv2`, `Bearer` nem
+`Authorization` (0 ocorrencias). O proximo passo com maior chance de resolver e'
+descompilar o `ControliD.iDCloud.LocalService.exe`, que e' o outro lado exato
+desse canal.

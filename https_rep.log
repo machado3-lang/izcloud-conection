@@ -1,0 +1,90 @@
+[2026-09-29T15:23:49.958Z] HTTPS em https://192.168.100.179:443 (certificado autoassado)
+[2026-09-29T15:23:50.860Z] interval -> 15
+[2026-09-29T15:23:51.035Z] estado: {"enable":true,"interval":15}
+[2026-09-29T15:23:52.275Z] 
+[2026-09-29T15:23:52.276Z] *** HANDSHAKE TLS CONCLUIDO ***
+[2026-09-29T15:23:52.276Z]   versao ....: TLSv1.2
+[2026-09-29T15:23:52.276Z]   cipher ....: ECDHE-RSA-AES128-GCM-SHA256
+[2026-09-29T15:23:52.277Z]   certificado do cliente: (NAO MANDOU)
+[2026-09-29T15:23:52.277Z]   SNI (servername): (ausente)
+[2026-09-29T15:23:53.081Z]   >>> servidor mandou [0] 72 B: "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n"
+[2026-09-29T15:23:53.088Z] !!! erro de socket: Parse Error: Invalid method encountered (HPE_INVALID_METHOD)
+[2026-09-29T15:23:53.089Z]   <<< REP mandou 254 bytes depois do handshake:
+[2026-09-29T15:23:53.089Z]       HTTP/1.1 200 OK\nAccess-Control-Allow-Origin: *\nAccess-Control-Allow-Headers: origin, x-csrftoken, content-type, accept\nVary: Origin\nAllow: GET,POST\nContent-Type: application/json; charset=utf-8\nContent-Length: 38\r\n\r\n{"error":"Allow: GET,POST","code":200}
+[2026-09-29T15:23:53.090Z]       hex: 485454502f312e3120323030204f4b0a4163636573732d436f6e74726f6c2d416c6c6f772d4f726967696e3a202a0a4163636573732d436f6e74726f6c2d416c6c6f772d486561646572733a206f726967696e2c20782d63737266746f6b656e2c20636f6e74656e742d747970652c206163636570740a56
+[2026-09-29T15:23:55.586Z]   >>> servidor mandou [1] 19 B: "{\"transactions\":[]}"
+[2026-09-29T15:23:58.088Z]   >>> servidor mandou [2] 15 B: "{\"result\":true}"
+[2026-09-29T15:24:00.580Z]   >>> servidor mandou [3] 15 B: "{\"status\":\"ok\"}"
+[2026-09-29T15:24:03.088Z]   >>> servidor mandou [4] 14 B: "{\"session\":\"\"}"
+[2026-09-29T15:24:05.584Z]   >>> servidor mandou [5] 16 B: "CID-REP_iDClass:"
+[2026-09-29T15:24:25.594Z]   (socket ocioso por 20s, sem resposta do REP)
+[2026-09-29T15:24:27.096Z] 
+[2026-09-29T15:24:27.097Z] *** HANDSHAKE TLS CONCLUIDO ***
+[2026-09-29T15:24:27.098Z]   versao ....: TLSv1.2
+[2026-09-29T15:24:27.098Z]   cipher ....: ECDHE-RSA-AES128-GCM-SHA256
+[2026-09-29T15:24:27.098Z]   certificado do cliente: (NAO MANDOU)
+[2026-09-29T15:24:27.099Z]   SNI (servername): (ausente)
+[2026-09-29T15:24:27.899Z]   >>> servidor mandou [0] 72 B: "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n"
+[2026-09-29T15:24:27.905Z] !!! erro de socket: Parse Error: Invalid method encountered (HPE_INVALID_METHOD)
+[2026-09-29T15:24:27.905Z]   <<< REP mandou 254 bytes depois do handshake:
+[2026-09-29T15:24:27.906Z]       HTTP/1.1 200 OK\nAccess-Control-Allow-Origin: *\nAccess-Control-Allow-Headers: origin, x-csrftoken, content-type, accept\nVary: Origin\nAllow: GET,POST\nContent-Type: application/json; charset=utf-8\nContent-Length: 38\r\n\r\n{"error":"Allow: GET,POST","code":200}
+[2026-09-29T15:24:27.906Z]       hex: 485454502f312e3120323030204f4b0a4163636573732d436f6e74726f6c2d416c6c6f772d4f726967696e3a202a0a4163636573732d436f6e74726f6c2d416c6c6f772d486561646572733a206f726967696e2c20782d63737266746f6b656e2c20636f6e74656e742d747970652c206163636570740a56
+[2026-09-29T15:24:30.403Z]   >>> servidor mandou [1] 19 B: "{\"transactions\":[]}"
+[2026-09-29T15:24:32.899Z]   >>> servidor mandou [2] 15 B: "{\"result\":true}"
+[2026-09-29T15:24:35.413Z]   >>> servidor mandou [3] 15 B: "{\"status\":\"ok\"}"
+[2026-09-29T15:24:37.902Z]   >>> servidor mandou [4] 14 B: "{\"session\":\"\"}"
+[2026-09-29T15:24:40.405Z]   >>> servidor mandou [5] 16 B: "CID-REP_iDClass:"
+[2026-09-29T15:25:00.420Z]   (socket ocioso por 20s, sem resposta do REP)
+[2026-09-29T15:25:01.991Z] 
+[2026-09-29T15:25:01.992Z] *** HANDSHAKE TLS CONCLUIDO ***
+[2026-09-29T15:25:01.992Z]   versao ....: TLSv1.2
+[2026-09-29T15:25:01.992Z]   cipher ....: ECDHE-RSA-AES128-GCM-SHA256
+[2026-09-29T15:25:01.993Z]   certificado do cliente: (NAO MANDOU)
+[2026-09-29T15:25:01.993Z]   SNI (servername): (ausente)
+[2026-09-29T15:25:02.799Z]   >>> servidor mandou [0] 72 B: "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n"
+[2026-09-29T15:25:02.805Z] !!! erro de socket: Parse Error: Invalid method encountered (HPE_INVALID_METHOD)
+[2026-09-29T15:25:02.806Z]   <<< REP mandou 254 bytes depois do handshake:
+[2026-09-29T15:25:02.806Z]       HTTP/1.1 200 OK\nAccess-Control-Allow-Origin: *\nAccess-Control-Allow-Headers: origin, x-csrftoken, content-type, accept\nVary: Origin\nAllow: GET,POST\nContent-Type: application/json; charset=utf-8\nContent-Length: 38\r\n\r\n{"error":"Allow: GET,POST","code":200}
+[2026-09-29T15:25:02.806Z]       hex: 485454502f312e3120323030204f4b0a4163636573732d436f6e74726f6c2d416c6c6f772d4f726967696e3a202a0a4163636573732d436f6e74726f6c2d416c6c6f772d486561646572733a206f726967696e2c20782d63737266746f6b656e2c20636f6e74656e742d747970652c206163636570740a56
+[2026-09-29T15:25:05.304Z]   >>> servidor mandou [1] 19 B: "{\"transactions\":[]}"
+[2026-09-29T15:25:07.795Z]   >>> servidor mandou [2] 15 B: "{\"result\":true}"
+[2026-09-29T15:25:10.294Z]   >>> servidor mandou [3] 15 B: "{\"status\":\"ok\"}"
+[2026-09-29T15:25:12.799Z]   >>> servidor mandou [4] 14 B: "{\"session\":\"\"}"
+[2026-09-29T15:25:15.300Z]   >>> servidor mandou [5] 16 B: "CID-REP_iDClass:"
+[2026-09-29T15:25:35.315Z]   (socket ocioso por 20s, sem resposta do REP)
+[2026-09-29T15:25:36.882Z] 
+[2026-09-29T15:25:36.883Z] *** HANDSHAKE TLS CONCLUIDO ***
+[2026-09-29T15:25:36.883Z]   versao ....: TLSv1.2
+[2026-09-29T15:25:36.883Z]   cipher ....: ECDHE-RSA-AES128-GCM-SHA256
+[2026-09-29T15:25:36.884Z]   certificado do cliente: (NAO MANDOU)
+[2026-09-29T15:25:36.884Z]   SNI (servername): (ausente)
+[2026-09-29T15:25:37.691Z]   >>> servidor mandou [0] 72 B: "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n"
+[2026-09-29T15:25:37.699Z] !!! erro de socket: Parse Error: Invalid method encountered (HPE_INVALID_METHOD)
+[2026-09-29T15:25:37.700Z]   <<< REP mandou 254 bytes depois do handshake:
+[2026-09-29T15:25:37.700Z]       HTTP/1.1 200 OK\nAccess-Control-Allow-Origin: *\nAccess-Control-Allow-Headers: origin, x-csrftoken, content-type, accept\nVary: Origin\nAllow: GET,POST\nContent-Type: application/json; charset=utf-8\nContent-Length: 38\r\n\r\n{"error":"Allow: GET,POST","code":200}
+[2026-09-29T15:25:37.700Z]       hex: 485454502f312e3120323030204f4b0a4163636573732d436f6e74726f6c2d416c6c6f772d4f726967696e3a202a0a4163636573732d436f6e74726f6c2d416c6c6f772d486561646572733a206f726967696e2c20782d63737266746f6b656e2c20636f6e74656e742d747970652c206163636570740a56
+[2026-09-29T15:25:40.197Z]   >>> servidor mandou [1] 19 B: "{\"transactions\":[]}"
+[2026-09-29T15:25:42.697Z]   >>> servidor mandou [2] 15 B: "{\"result\":true}"
+[2026-09-29T15:25:45.185Z]   >>> servidor mandou [3] 15 B: "{\"status\":\"ok\"}"
+[2026-09-29T15:25:47.688Z]   >>> servidor mandou [4] 14 B: "{\"session\":\"\"}"
+[2026-09-29T15:25:50.191Z]   >>> servidor mandou [5] 16 B: "CID-REP_iDClass:"
+[2026-09-29T15:26:10.203Z]   (socket ocioso por 20s, sem resposta do REP)
+[2026-09-29T15:26:11.762Z] 
+[2026-09-29T15:26:11.763Z] *** HANDSHAKE TLS CONCLUIDO ***
+[2026-09-29T15:26:11.763Z]   versao ....: TLSv1.2
+[2026-09-29T15:26:11.763Z]   cipher ....: ECDHE-RSA-AES128-GCM-SHA256
+[2026-09-29T15:26:11.764Z]   certificado do cliente: (NAO MANDOU)
+[2026-09-29T15:26:11.764Z]   SNI (servername): (ausente)
+[2026-09-29T15:26:12.565Z]   >>> servidor mandou [0] 72 B: "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n"
+[2026-09-29T15:26:12.575Z] !!! erro de socket: Parse Error: Invalid method encountered (HPE_INVALID_METHOD)
+[2026-09-29T15:26:12.576Z]   <<< REP mandou 254 bytes depois do handshake:
+[2026-09-29T15:26:12.576Z]       HTTP/1.1 200 OK\nAccess-Control-Allow-Origin: *\nAccess-Control-Allow-Headers: origin, x-csrftoken, content-type, accept\nVary: Origin\nAllow: GET,POST\nContent-Type: application/json; charset=utf-8\nContent-Length: 38\r\n\r\n{"error":"Allow: GET,POST","code":200}
+[2026-09-29T15:26:12.576Z]       hex: 485454502f312e3120323030204f4b0a4163636573732d436f6e74726f6c2d416c6c6f772d4f726967696e3a202a0a4163636573732d436f6e74726f6c2d416c6c6f772d486561646572733a206f726967696e2c20782d63737266746f6b656e2c20636f6e74656e742d747970652c206163636570740a56
+[2026-09-29T15:26:15.070Z]   >>> servidor mandou [1] 19 B: "{\"transactions\":[]}"
+[2026-09-29T15:26:17.576Z]   >>> servidor mandou [2] 15 B: "{\"result\":true}"
+[2026-09-29T15:26:20.079Z]   >>> servidor mandou [3] 15 B: "{\"status\":\"ok\"}"
+[2026-09-29T15:26:21.536Z] 
+[2026-09-29T15:26:21.536Z] restaurando interval=2078000
+[2026-09-29T15:26:22.565Z]   >>> servidor mandou [4] 14 B: "{\"session\":\"\"}"
+[2026-09-29T15:26:22.695Z] {}
+[2026-09-29T15:26:22.710Z] estado: {"enable":true,"interval":2078000}
