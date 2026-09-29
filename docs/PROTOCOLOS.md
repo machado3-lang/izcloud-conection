@@ -558,3 +558,121 @@ mesma sub-rede). E' teste **de diagnostico**, nao de deploy.
    O capturador escuta a 3306 entre outras. Se ficar rodando enquanto a suite
    e2e sobe, ela conversa com o capturador em vez do MySQL e os testes passam
    por engano. Ja aconteceu. Pare o capturador antes de rodar qualquer teste.
+
+
+## 10. O AFD Downloader do Control iD (descompactado) — a fonte oficial
+
+Em `C:\Producao\Gerenciador REPs\AFD Downloader` está o cliente **oficial** do
+iDCloud. Não é o mesmo firmware do REP, mas é o outro lado do protocolo, e ele
+responde as perguntas que faltavam.
+
+### 10.1 A configuração real (`ControliD.iDCloud.LocalService.exe.config`)
+
+```xml
+CloudBase: Server=cloud1.cjub4athorbi.sa-east-1.rds.amazonaws.com;
+           Database=idcloudbase;Uid=service;Pwd=...
+CloudTeste: ...;Database=idcloudteste;Uid=main;Pwd=...
+IP   = auto
+Port = 443
+CertificateFile     = CodeSigning2017.pfx
+CertificatePassword = controlid1818
+CloudUTC = -3
+```
+
+Três coisas decorrem disso:
+
+- **A porta do canal é 443.** O MySQL (RDS) é do *cliente de desktop*; o canal de
+  serviço é HTTP com **443** e **certificado do cliente** (mutual TLS). É o
+  arquivo `CodeSigning2017.pfx` que está na mesma pasta.
+- **O iDCloud é MySQL + HTTP.** O `DataCloud.dll` usa `MySqlConnector` e
+  `HttpWebResponse`. Não é "MySQL direto do REP" nem só "HTTPS": o serviço fala
+  os dois.
+- As credenciais do RDS estão **em texto puro no .config** (e a senha do SMTP do
+  helpdesk também). Vale registrar como risco, não como notícia.
+
+### 10.2 O iDCloud tem DOIS dialetos de schema
+
+O `DataCloud.dll` consulta as duas formas, e o firmware tem 2019 — provavelmente
+usa a antiga (português), mas o serviço aceita as duas:
+
+```sql
+-- dialeto antigo (português, id_Pessoa)
+SELECT * FROM @schema.Templates WHERE id_Pessoa = {0}
+INSERT INTO @schema.AFD (id_Equipamento, PIS, NSR, Data, Tipo, Dado, CRC, ...)
+
+-- dialeto novo (inglês, idDevice)
+INSERT INTO @schema.AFD (idDevice, PIS, NSR, Tipo, dateTime, text, CRC, dateInserted, mobile)
+INSERT INTO @schema.Template (idPerson, Template, excluded) VALUES (...)
+
+select t1.* from @schema.person t1
+where t1.excluded=FALSE and t1.status=1 and t1.pis>0 and t1.pis<999999999999
+```
+
+Atenção: no dialeto novo, `AFD` tem colunas `Tipo`, `dateTime`, `text`, `CRC`,
+`mobile`, `timeZone` — não `Data`/`Dado` como no antigo.
+
+### 10.3 Como o REP sabe que há dado novo: um TRIGGER
+
+```sql
+BEGIN
+  update idcloudbase.clientes set lastUpdate = NEW.dataAtualizacao
+   where id_cliente = @id_cliente;
+END
+```
+
+Este é o mecanismo de "cursor" do iDCloud oficial: mexer em `pessoas` bumps
+`clientes.lastUpdate`, e o outro lado olha esse campo. É a mesma ideia do
+`pessoas.DataAtualizacao` que já indexamos — o oficial só materializa isso em um
+segundo nível, no `clientes`.
+
+### 10.4 O que o firmware tem (e o que não tem)
+
+Do `fw.bin` (6 MB, ARM + mbedTLS + rapidjson):
+
+- **NÃO** tem `mysql`, `mysqld`, `MariaDB`, `3306`, `amazonaws`
+- **NÃO** tem `idsecure` nem nenhuma URL de serviço
+- tem `get_idcloud` e `set_idcloud` como comandos **FCGI** (é por isso que
+  `get_idcloud.fcgi` responde)
+- tem o cliente C++ na hierarquia `CiD::IDCloud::IDCLoudEvent`, com
+  `RegisterIDCloudEvents` e `HandlerQueue` — os símbolos **não** estão
+  ofuscados
+- tem a sequência, com rapidjson ao lado:
+
+  ```text
+  [iDCloud] Looking for iDCloud...
+  [iDCloud] Server found!.
+  [iDCloud] Handshake is good!.
+  [iDCloud] Connection Failure....
+  ```
+
+- tem mbedTLS completo, com SNI (`client hello, adding server name extension: %s`)
+- `Content-Type: application/octet-stream` e `[REST] ` aparecem no binário
+
+Cuidado com um falso positivo: `https://%u.%u.%u.%u:%u` **não** é o canal do
+iDCloud. Ela está no bloco do servidor web do próprio REP, num
+`HTTP/1.1 301 Moved Permanently / Location:` — ou seja, é o redirect de
+HTTP para HTTPS do REP, usando o IP e a porta **dele**.
+
+**Conclusão:** o REP faz **TLS com JSON** (rapidjson + mbedTLS + "Handshake is
+good"). "Server found" é o socket conectado; "Handshake is good" é o TLS
+completado. O "Looking for" sugere até resolução de endereço.
+
+### 10.5 Efeito no plano: a Railway volta a ser viável
+
+Com a porta **443** confirmada, o canal é HTTPS — e a Railway publica HTTPS. Então
+o teste que você queria fazer primeiro faz sentido, e **não precisa mexer no
+REP**: ele já está apontado para `69.46.46.112`.
+
+Ressalvas honestas:
+
+- a borda da Railway encerra o TLS, então o certificado do cliente chega
+  **apenas** se o REP mandar como header (normalmente não manda). Isso impede
+  autenticar por mTLS — mas não impede ver o tráfego;
+- se o firmware validar a CA do Control iD no servidor, nosso certificado
+  autoassado é recusado. Se ele só fizer o handshake (as mensagens de erro do
+  mbedTLS sugerem que é tolerante), funciona;
+- o caminho da URL é desconhecido — por isso o coletor responde em `/push` e nas
+  variantes, e aceita qualquer método.
+
+O `interval` gravado no REP é **2078000**. Se for milissegundos, são ~35 min
+entre tentativas; se for segundos, ~24 dias. Vale descobrir antes de esperar.
