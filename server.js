@@ -1,4 +1,4 @@
-// server.js — API multi-tenant do iZCloud (nossa nuvem para REPs 1510/671)
+// server.js - API multi-tenant do iZCloud (nossa nuvem para REPs 1510/671)
 import 'dotenv/config';
 import express, { Router } from 'express';
 import cors from 'cors';
@@ -47,12 +47,13 @@ const captura = Router();
 
 // O express.raw fica NAS ROTAS, nao no Router. Com `type: () => true` montado
 // globalmente ele consome o corpo de TODAS as requisicoes e o express.json
-// depois ve um Buffer em vez de objeto — o login passava a receber
+// depois ve um Buffer em vez de objeto - o login passava a receber
 // "Login invalido" mesmo com credencial boa.
 const corpoBruto = express.raw({ type: () => true, limit: '4mb' });
 
-captura.all('/push', corpoBruto, async (req, res) => {
-  const corpo = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+// Grava uma captura. Funcao unica porque o mesmo registro e' usado tanto pelas
+// rotas conhecidas quanto pelo 404 das rotas desconhecidas.
+async function gravarCaptura(req, corpo) {
   const hex = corpo.subarray(0, CAPTURA_LIMITE).toString('hex');
   const txt = corpo.subarray(0, CAPTURA_LIMITE).toString('latin1');
   try {
@@ -69,6 +70,10 @@ captura.all('/push', corpoBruto, async (req, res) => {
   } catch (e) {
     console.error('[captura] falha ao gravar:', e.message);
   }
+}
+
+captura.all('/push', async (req, res) => {
+  await gravarCaptura(req, Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0));
   // Resposta tolerante: o aparelho espera JSON. "transactions" vazio porque e'
   // o formato que o push oficial usa para dizer "nada a fazer".
   res.status(200).json({ transactions: [] });
@@ -77,7 +82,31 @@ captura.all('/push', corpoBruto, async (req, res) => {
 // Variantes que o aparelho pode estar chamando, todas com o mesmo coletor.
 captura.all(['/api/push', '/api/push/poll', '/event', '/api/push/event', '/result', '/api/push/result'],
   corpoBruto, (req, res) => res.status(200).json({ transactions: [] }));
+
+// Rede de seguranca: o caminho do canal iDCloud e' DESCONHECIDO. Se o REP chamar
+// algo diferente de /push, um 404 sumiria com a tentativa e nao teriamos como
+// descobrir o que era. Entao qualquer caminho desconhecido tambem e' gravado —
+// no 404, la embaixo, com o corpo bruto que este middleware guardou.
+//
+// O express.raw NAO pode ser montado aqui como `app.use(corpoBruto, ...)`:
+// ele e' global e, com `type: () => true`, consome o corpo de TODAS as
+// requisicoes — o express.json depois ve um Buffer e o login passa a responder
+// "Login invalido" com credencial boa. Por isso o caminho e' decidido ANTES de
+// tocar no corpo.
+const ehArquivoEstatico = (p) => /^\/[\w\-./]+\.(js|css|png|jpg|svg|ico|woff2?|ttf|map|json|txt|webmanifest)$/i.test(p);
+const precisaDoCorpoBruto = (p) => !p.startsWith('/api/') && p !== '/api' && !ehArquivoEstatico(p);
+
+app.use((req, res, next) => {
+  if (!precisaDoCorpoBruto(req.path)) return next();
+  corpoBruto(req, res, (e) => {
+    if (e) return next(e);
+    req.corpoBruto = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    next();
+  });
+});
+
 app.use(captura);
+
 
 // 50MB de JSON em rota publica e um DoS facil; 20MB sobra para import de AFD.
 // (A captura do REP ja foi registrada acima, de proposito, antes deste parser.)
@@ -119,7 +148,7 @@ app.get('/api/config', async (_, res) => {
 });
 
 // Diagnostico de banco. Detalhes de conexao (host/porta) so para quem tem a
-// IZCLOUD_ADMIN_KEY — o endpoint e publico, entao nao pode vazar a topologia
+// IZCLOUD_ADMIN_KEY - o endpoint e publico, entao nao pode vazar a topologia
 // interna da nuvem.
 app.get('/api/health/db', adminKey, async (_, res) => {
   try { res.json(await verificarConexaoCore()); }
@@ -127,7 +156,7 @@ app.get('/api/health/db', adminKey, async (_, res) => {
 });
 
 // Mesmo diagnostico, versao publica e sem dados sensiveis. `faltando` lista as
-// colunas obrigatorias que ainda nao existem no core — e o que explica um
+// colunas obrigatorias que ainda nao existem no core - e o que explica um
 // login respondendo 503.
 app.get('/api/health/status', async (_, res) => {
   try {
@@ -299,7 +328,7 @@ app.post('/api/admin/bootstrap', adminKey, async (req, res) => {
 });
 
 // =====================================================================
-// ADMINISTRACAO DA PLATAFORMA (/api/admin/*) — tela public/admin.html
+// ADMINISTRACAO DA PLATAFORMA (/api/admin/*) - tela public/admin.html
 // Equivale ao "criar as contas dos usuarios" do iDCloud: o admin cria o login
 // e a senha de cada cliente, que depois administra as proprias empresas.
 // Regra: nada e apagado, apenas desativado (preserva schemas e dados de ponto).
@@ -439,7 +468,7 @@ app.get('/api/admin/auditoria', async (req, res) => {
   try { res.json(await listarAuditoria(req.query.limite)); } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
-// Capturas do canal iDCloud. `?corpo=1` traz hex e texto dos bytes crus — e' o
+// Capturas do canal iDCloud. `?corpo=1` traz hex e texto dos bytes crus - e' o
 // que revela o protocolo quando o REP conseguir falar.
 app.get('/api/admin/capturas', async (req, res) => {
   try {
@@ -689,6 +718,17 @@ app.post('/api/afd/import', async (req, res) => {
 
 // Arquivos estaticos da UI web (public/). Rotas /api/* acima tem precedencia.
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Ultimo recurso: caminho desconhecido que NAO e' da UI e NAO e' /api. E' aqui
+// que o REP cai se chamar o canal do iDCloud por um caminho que nao conheciamos.
+// Sem isto o 404 engoliria a tentativa e o unico sintoma seria "nada acontece".
+app.use(async (req, res) => {
+  if (req.corpoBruto) {
+    await gravarCaptura(req, req.corpoBruto);
+    return res.status(200).json({ transactions: [] });
+  }
+  res.status(404).json({ error: 'Rota nao encontrada' });
+});
 
 // Poller silencioso multi-tenant (so roda se houver banco core)
 try { iniciarPoller(getCorePool, getTenantPool); } catch {}
