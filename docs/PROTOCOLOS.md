@@ -1,23 +1,65 @@
 # Protocolos Control iD — o que é oficial, o que descobrimos, o que falta
 
 Documento de referência para a integração do iZCloud com os equipamentos Control iD.
-Fontes: documentação oficial da Control iD e análise do firmware `fw.bin` do REP iDClass.
+Fontes: documentação oficial da Control iD, análise do firmware `fw.bin` do REP
+iDClass, e **medição ao vivo no REP de teste** (`192.168.100.132`).
 
-**Data da análise:** 26/09/2026
-**Repositório:** `izcloud-conection` · **Alvo de deploy:** Railway (sem IP público fixo)
+**Análise iniciada em:** 26/09/2026 · **Canal do REP resolvido em:** 29/09/2026
+**Repositório:** `izcloud-conection`
+
+> **Aviso de leitura.** Este documento cresceu por partes. As seções 1 a 8 são o
+> raciocínio do começo; as seções 9 a 12 são a medição. Onde a medição contrasta
+> com uma hipótese anterior, isso está marcado como **SUPERADO**. Se você só
+> quer o estado atual, leia o §1.
 
 ---
 
-## 1. Resumo executivo (leia isto primeiro)
+## 1. Estado atual (leia isto primeiro)
 
-| Equipamento | Protocolo | Precisa de IP público fixo? | railway funciona? |
-|---|---|---|---|
-| **iDFace / iDFlex / iDAccess / coletor** | API REST oficial: **Push** + **Monitor** | **Não** — aceita **domínio** | **Sim** |
-| **REP iDClass 1510 / 671** | Canal iDCloud (TLS) para um servidor iDCloud | **Sim** — o campo aceita **só IP numérico** (testado) | **Não** |
+### 1.1 iDFace / iDFlex / iDAccess / coletor — linha de acesso
 
-Consequência prática: **o iZCloud na Railway cobre iDFace/iDFlex/coletor hoje.** Para o
-REP iDClass é necessária uma **VPS com IP fixo** (ver §7). O agente local foi
-descartado por decisão do dono do produto (não queremos software na máquina do cliente).
+| Item | Situação |
+|---|---|
+| Protocolo | API REST oficial: **Push** + **Monitor** |
+| Endereço | aceita **domínio** |
+| Railway | **serve**, com proxy HTTP comum |
+| Estado no código | **não implementado** (é o próximo trabalho) |
+
+### 1.2 REP iDClass 1510 / 671 — linha de ponto
+
+| Item | Situação |
+|---|---|
+| Protocolo do canal iDCloud | **RESOLVIDO**: a própria API FCGI do REP, sobre **TLS 1.2 na 443** |
+| Quem conduz | **o servidor**. O REP abre a conexão e fica mudo esperando |
+| Certificado do servidor | **autoassado é aceito** — não valida a CA da Control iD |
+| Porta | **443 fixa no firmware** (não segue a porta do web server do REP) |
+| SNI / Host | **o REP não envia** — conecta por IPv4 literal |
+| Railway | **NÃO serve** (§12.3: a 443 é a borda; o TCP proxy não aceita porta 443) |
+| VPS com IP fixo | **necessária** — e pelo controle da borda, não só pelo IP |
+| Estado no código | `idcloudServer.js` pronto, com trava de série; coleta implementada |
+
+### 1.3 O que o canal do REP é, em uma frase
+
+O `idcloudServer` faz o papel que a doc oficial descreve para o *software de
+desktop*: **abre sessão, lê o que o aparelho tem e grava no nosso banco.** Não há
+protocolo binário secreto nem MySQL do lado do REP — era essa a dúvida que
+travou o projeto por semanas.
+
+### 1.4 Pendências conhecidas
+
+1. **O AFD não pagina** (§12.5). Só vemos as primeiras 1000 linhas. As batidas
+   novas ficam fora de alcance até o aparelho rotacionar o arquivo. **A rotação
+   precisa ser confirmada com a Control iD** — é o maior risco do produto.
+2. **A tela de "Coletas" não existe** ainda na UI. As rotas estão prontas.
+3. **O número curto de iDCloud** (§12.4) não está implementado no nosso fluxo de
+   provisionamento de REP.
+
+### 1.5 Decisões de produto já tomadas
+
+- Agente local **descartado** — não queremos software na máquina do cliente.
+- Railway cobre **acesso**; **ponto** exige VPS.
+- Um schema por empresa no MySQL (`tenant_000N`), com usuário MySQL por empresa
+  para o REP — **essa parte do plano MySQL caiu**: o REP não conecta em MySQL.
 
 ---
 
@@ -218,7 +260,12 @@ Classe de evento `IDCloud::IDCLoudEvent` com `Event::Dispatcher`,
 `iDCloud Task` (thread própria). O REP então é **cliente de um serviço**, o que
 coerente com o desenho do iDCloud da Control iD.
 
-### 4.3 O canal é TLS/HTTPS, não MySQL bruto
+### 4.3 ~~O canal é TLS/HTTPS, não MySQL bruto~~ — **SUPERADO por §12.1**
+
+> A conclusão (TLS, não MySQL) estava certa, mas o raciocínio estava errado:
+> cheguei nela pela *ausência* de strings de MySQL no firmware. A medição do §12
+> mostrou que o canal **é a própria API FCGI do REP** — não havia MySQL para
+> procurar. O que sobra daqui, e continua válido, é a sequência de log.
 
 Evidências **negativas** (o que *não* existe no firmware):
 
@@ -242,7 +289,13 @@ Evidências **positivas** de TLS:
 resolver/conectar o endereço configurado → **handshake TLS**. O iZCloud precisa ser
 o **servidor HTTPS** que o REP procura.
 
-### 4.4 Reconciliação com a documentação do iDCloud
+### 4.4 ~~Reconciliação com a documentação do iDCloud~~ — **SUPERADO por §12.1**
+
+> A ideia de "iDCloud como gateway que fala HTTPS com o REP e MySQL com o
+> software" era uma hipótese plausível. **Não é assim:** o REP não fala MySQL
+> nenhum. Quem fala com o banco é o nosso servidor, **depois** de ler o AFD pela
+> API FCGI. A documentação oficial descreve o *cliente de desktop*, que é outro
+> papel.
 
 A documentação de integração do iDCloud
 (<https://www.controlid.com.br/suporte/exemplos/site/>) diz:
@@ -435,7 +488,7 @@ hipótese MySQL-sobre-TLS).
 
 ---
 
-## 9. Referências
+## 8-bis. Referências
 
 | Assunto | Endereço |
 |---|---|
@@ -657,7 +710,13 @@ HTTP para HTTPS do REP, usando o IP e a porta **dele**.
 good"). "Server found" é o socket conectado; "Handshake is good" é o TLS
 completado. O "Looking for" sugere até resolução de endereço.
 
-### 10.5 Efeito no plano: a Railway volta a ser viável
+### 10.5 ~~Efeito no plano: a Railway volta a ser viável~~ — **ERRADO, corrigido em §12.3**
+
+> Aqui cheguei a concluir que a Railway serviria, só porque a porta 443 é HTTPS.
+> **Não serve.** A 443 da Railway é a borda, que encerra o TLS e roteia por
+> SNI/`Host`, e o REP não envia nenhum dos dois. Além disso a Railway não deixa
+> escolher a porta pública do TCP proxy, só permite um por serviço, e ele não
+> aceita 443. Ver a medição em §12.3.
 
 Com a porta **443** confirmada, o canal é HTTPS — e a Railway publica HTTPS. Então
 o teste que você queria fazer primeiro faz sentido, e **não precisa mexer no
@@ -772,7 +831,14 @@ Isto **confirma a VPS como obrigatoria**, e nao so por causa do IP fixo: e' pelo
 controle da borda. Na VPS aceitamos qualquer `Host` e podemos terminar o TLS
 mesmo, com qualquer certificado.
 
-### 11.6 O que ainda falta
+### 11.6 ~~O que ainda falta~~ — **SUPERADO por 12.1**
+
+> A duvida era o formato do primeiro comando. **Resolvido:** e'
+> POST /<comando>.fcgi com JSON, exatamente a API FCGI ja implementada em
+> epClient.js. As chaves RHiD v2 (hidv2, Bearer, ccessToken) sao do
+> cliente de **desktop** e nao aparecem no firmware do REP.texto
+
+### 11.6-bis O que ainda falta (depois da medicao)
 
 O **formato do primeiro comando do servidor** depois do TLS. Os caminhos
 candidatos vem do RHiD v2 (`/rhidv2/...`, `login`, `Authorization: Bearer`), mas
@@ -910,3 +976,120 @@ Consequencias no codigo:
 
 Rotas: `POST /api/reps/:id/reservar-coleta`, `GET /api/reps/:id/coleta`,
 `GET /api/coletas`.
+
+
+---
+
+## 13. Runbook — o que fazer quando houver a VPS
+
+Tudo aqui foi validado na rede local, contra o REP real. A VPS muda o endereço,
+não a lógica.
+
+### 13.1 Provisionar
+
+1. VPS com **IP público fixo** e **porta 443 liberada** (e nada mais: o REP só
+   fala com a 443).
+2. Certificado. **Autoassado funciona** — o REP não valida a CA da Control iD
+   (§11.2). Se preferir válido, Let's Encrypt é indiferente para o aparelho.
+3. apontar um nome para o IP e instalar o certificado no servidor.
+4. No `idcloudServer.js`, nada muda: `IDCLOUD_CERT`, `IDCLOUD_KEY`,
+   `IDCLOUD_PORTA` (default 443), `IDCLOUD_HOST` (default `0.0.0.0`).
+
+### 13.2 No REP
+
+`txtIPCloud` = o IP da VPS. **Não precisa mexer em mais nada:**
+
+- a porta é fixa em 443 e segue o firmware;
+- a senha do web server pode ser qualquer uma — passa por `REP_ADMIN_SENHA`;
+- o `interval` pode ficar no padrão (2078000). Para testar rápido,
+  `POST set_idcloud {"enable":true,"interval":8}`.
+
+### 13.3 No iZCloud
+
+1. A UI (ou curl) reserva a vaga do REP:
+   `POST /api/reps/:id/reservar-coleta {"minutos": 30}`
+2. O REP conecta. O serviço valida o `nSerie` da vaga, abre sessão, lê e grava.
+3. Conferir: `GET /api/reps/:id/coleta` e `GET /api/coletas`.
+
+### 13.4 Segurança — o ponto que exige atenção
+
+**O REP não se apresenta.** Ele abre a conexão e não manda um byte, então não há
+como ele provar quem é, e um `login` com `admin/admin` funciona por qualquer um
+que chegue na 443. As três camadas, em ordem:
+
+1. **Trava de série** (implementada): a primeira coisa é `get_about.fcgi`, e o
+   `nSerie` precisa bater com o REP esperado da vaga. Sem vaga, derruba.
+2. **Senha forte** no web server do REP (implementada via `REP_ADMIN_SENHA`):
+   sem isso a trava vira só atraso.
+3. **Não expor a 443 para a internet inteira** sem a vaga ativa. Uma VPS é
+   endereço público; se a 443 estiver aberta, qualquer um chega na trava.
+
+### 13.5 Diagnóstico rápido
+
+```bash
+# O REP conectou? (o log do serviço mostra "[idcloud] REP ... conectado")
+# Trouxe dados?
+curl -H "Authorization: Bearer $TOKEN" $BASE/api/reps/1/coleta
+
+# Ver o que o REP respondeu, comando a comando
+node descobre_porta.mjs          # escuta 7 portas e imprime as respostas FCGI
+```
+
+Se aparecer `conexao recusada: nenhum REP reservado`, é a trava — chame
+`reservar-coleta` antes.
+
+---
+
+## 14. Perguntas em aberto (para a Control iD)
+
+1. **Rotação do AFD.** O aparelho entrega só as primeiras 1000 linhas e ignora
+   `offset`. O arquivo rotaciona sozinho quando enche? Com que tamanho? Sem
+   isso não temos o histórico completo — é o maior risco do produto.
+2. **`get_afd` com data.** Existe parâmetro de período em alguma versão de
+   firmware? Testei 10 nomes e nenhum pagina nesta versão (v1048, 2019).
+3. **Número curto de iDCloud.** Ele amarra o aparelho a uma empresa no lado do
+   Control iD, e só na primeira vez. Como isso se reflete para um servidor
+   **próprio**? Provavelmente o número vira o identificador que a nossa UI emite
+   ao provisionar o REP, mas é preciso confirmar com o fabricante.
+4. **Formato do REP para o iDCloud oficial.** A doc descreve o cliente de
+   desktop. Para um servidor próprio, o REP iDClass é o mesmo aparelho com
+   `txtIPCloud` apontado para nós — é o que assumimos e funcionou.
+
+---
+
+## 15. Ferramentas de diagnóstico (no repositório)
+
+Todas rodam contra o REP de teste e foram usadas para chegar nas conclusões
+acima. Precisam do REP com `txtIPCloud` apontado para `192.168.100.179`.
+
+| Arquivo | Para que serve |
+|---|---|
+| `captura_rep.mjs` | Escuta 33 portas e grava os bytes crus (`.bin`). Achou a porta 443. |
+| `descobre_porta.mjs` | Descobre em que porta o REP disca, e imprime as respostas FCGI. |
+| `teste_coleta.mjs` | Prova o canal inteiro: trava, login, usuários, empresa, AFD. |
+| `teste_offset.mjs` | Mostra que nenhum parâmetro pagina o AFD. |
+| `dump_afd.mjs` | Baixa um AFD e mostra a distribuição de tipos de registro. |
+| `ch.mjs` | Lê um `.bin` capturado e extrai SNI, cipher suites, extensões. |
+
+Exigem `cert.pem` e `chave.pem` (gitignored). Para gerar:
+
+```bash
+openssl req -x509 -newkey rsa:2048 -keyout chave.pem -out cert.pem -days 30 -nodes \
+  -subj "/C=BR/O=iZCloud/CN=SEU_IP" -addext "subjectAltName=IP:SEU_IP"
+```
+
+Comandos úteis no REP (o web server dele escuta na porta configurada — 443 no
+padrão):
+
+```bash
+# login e leitura
+curl -k -X POST -H "Content-Type: application/json" \
+  -d '{"login":"admin","password":"admin"}' https://192.168.100.132/login.fcgi
+
+# acelerar as tentativas do iDCloud (e restaurar depois)
+curl -k -X POST -H "Content-Type: application/json" \
+  -d '{"enable":true,"interval":8}' "https://192.168.100.132/set_idcloud.fcgi?session=$SESS"
+```
+
+> `load_users` exige `limit` **e** `offset` inteiros. Sem `offset` o aparelho
+> responde `'offset' deve ser do inteiro`.

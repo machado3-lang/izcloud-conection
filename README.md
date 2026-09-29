@@ -158,24 +158,50 @@ Modelo **"empurrar para a nuvem"** — o servidor consulta o REP continuamente:
 
 ---
 
+
 ## 5. Como apontar o REP para o iZCloud
 
-O REP (iDClass) aceita um **IP de iDCloud** configurável. Use o **REPCONFIG.exe**
-(`C:\Producao\Gerenciador REPs\REPCONFIG.exe`) para gravar o IP/domínio do
-servidor iZCloud no campo `configOffSetIPiDCloud` / `txtIPCloud`. A comunicação
-REP↔nuvem é **HTTPS/JSON (FCGI)**.
+O REP (iDClass) tem um campo de **IP do iDCloud** (`txtIPCloud` no REPCONFIG.exe,
+offset 2749 do config de 128 KB do aparelho). Grave ali o **IP** do servidor.
 
-> Opcional: se o REP não conseguir "empurrar", o iZCloud faz o inverso via
-> **FCGI IP-direto** (mesma lógica de `repClient.js`), sem exigir IP estático.
+O que acontece depois foi medido no REP real, não deduzido:
+
+```
+REP abre TCP na 443 (porta fixa no firmware) e faz TLS 1.2
+REP não envia nada — espera o servidor falar
+servidor -> POST /login.fcgi  -> {session}
+servidor -> POST /get_about.fcgi, /get_afd.fcgi, /load_users.fcgi, ...
+REP responde JSON
+```
+
+Ou seja: **o canal iDCloud é a própria API FCGI do REP, e quem conduz é o
+servidor.** Certificado autoassado é aceito — não há CA a comprar.
+
+Detalhes que mudam a operação:
+
+- **Porta 443 é fixa.** Não segue a porta do web server do REP, e `set_idcloud`
+  só aceita `enable` e `interval` (testado: `port`, `porta`, `tcp_port` são
+  ignorados).
+- **O REP não manda SNI nem `Host`.** Ele conecta por IPv4 literal. Por isso a
+  Railway (borda compartilhada na 443) não serve para o REP.
+- **`get_afd` não pagina.** Limite máximo 1000 linhas, `offset` é aceito e
+  ignorado. Só vemos o começo do arquivo.
+
+Detalhe completo em [`docs/PROTOCOLOS.md`](docs/PROTOCOLOS.md) §12, e o passo a
+passo de provisionamento em §13.
 
 ---
 
-## 6. Deploy (IP estático)
+## 6. Deploy
 
-- **Oracle Cloud Free** (recomendado): VM sempre-on + IP público estático fixo.
-  Necessário para o REP conseguir empurrar para a nuvem.
-- **Railway**: só dá domínio, sem IP fixo → trava o modo "REP empurra"; use
-  apenas no modo FCGI IP-direto.
+- **VPS com IP público fixo** — obrigatório para o REP. E pelo motivo da borda,
+  não só do IP: lá somos nós que aceitamos qualquer `Host` e terminamos o TLS.
+- **Railway** — serve a API e a linha de acesso (iDFace/iDFlex, que aceita
+  domínio), mas **não** o canal do REP.
+
+O serviço do canal sobe sozinho se `cert.pem` e `chave.pem` existirem no
+diretório (ou aponte `IDCLOUD_CERT`/`IDCLOUD_KEY`). Sem eles, o app segue
+funcionando só pela API — que é o caso da Railway.
 
 Arquivos de apoio: `docker-compose.yml` (MySQL + Node), `.env.example`.
 
@@ -186,15 +212,16 @@ Arquivos de apoio: `docker-compose.yml` (MySQL + Node), `.env.example`.
 | Arquivo | Função |
 |---|---|
 | `repClient.js` | Cliente FCGI dos REPs (login, probe, add_users, get_afd, detecção 1510/671) |
+| `idcloudServer.js` | **Servidor do canal iDCloud**: TLS 443, trava de série, coleta do AFD |
 | `idcloud.js` | Cliente do schema do cliente (ler/gravar `afd`, `pessoas`, `equipamentos`, `sync_status`) |
 | `afd.js` | Parser 1510/671 + `gerarPorPeriodo` (gera AFD reimportável) |
 | `sync.js` | `sincronizarAfd` (incremental NSR) + `iniciarPoller` (silencioso, itera tenants) |
-| `core.js` | Núcleo multi-tenant: pool core + pool por schema + criar/verificar clientes |
+| `core.js` | Núcleo multi-tenant: pools, clientes, contas, migrations, coletas |
 | `auth.js` | Login JWT + middleware `authTenant` (Bearer ou Basic+`X-Client-DB`) |
-| `server.js` | API Express multi-tenant (`/api/auth/*`, `/api/reps`, `/api/pessoas`, `/api/afd/*`) |
-| `schema_core.sql` | Banco `izcloud_core` (tabela `clientes`) |
+| `server.js` | API Express multi-tenant (`/api/auth/*`, `/api/reps`, `/api/pessoas`, `/api/afd/*`, `/push`) |
+| `schema_core.sql` | Banco `izcloud_core` (contas, clientes, auditoria, capturas) |
 | `schema_tenant.sql` | Tabelas de UM cliente (executado dentro de `tenant_XXXX`) |
-| `test_*.mjs` | Testes contra REP real (IP 192.168.100.132) |
+| `descobre_porta.mjs`, `captura_rep.mjs` | Diagnóstico do canal contra o REP real |
 
 ---
 
@@ -269,34 +296,46 @@ curl -X POST http://localhost:3100/api/afd/export \
 
 ---
 
-## 10. Deploy em Oracle Cloud Free
+## 10. Deploy na VPS (o passo a passo)
 
-VM sempre-on + **IP público estático** (exigido para o REP "empurrar" para a nuvem).
-Use o `docker-compose.yml` (MySQL + Node) ou MySQL nativo.
+VM sempre-on com **IP público fixo** e **porta 443 liberada** — o REP só conecta
+na 443, e essa porta é fixa no firmware. Use `docker-compose.yml` (MySQL + Node)
+ou MySQL nativo.
 
-1. **IP estático**: anote o IP público da VM — é ele que vai no REPCONFIG
-   (campo iDCloud) e que o Secullum/systemas externos usam como "servidor".
-2. **Firewall / Security Lists**: abra `3306` (MySQL) e `3100` (API iZCloud)
-   para `0.0.0.0/0` (reestreia por IP depois).
-3. **Banco**: `mysql -u root -p < schema_core.sql` (cria `izcloud_core`); os
-   schemas dos clientes são criados via `/api/auth/register`.
-4. **Variáveis** (`.env` / `docker-compose`): defina `IDCLOUD_PASS`,
-   `JWT_SECRET` e `IZCLOUD_ADMIN_KEY` **fortes**; `CORE_DB=izcloud_core`.
-5. **Primeiro cliente (setup)**:
+> O passo a passo completo, incluindo certificado, segurança e diagnóstico, está
+> em [`docs/PROTOCOLOS.md`](docs/PROTOCOLOS.md) §13. Resumo:
+
+1. **IP fixo**: é ele que vai no `txtIPCloud` do REP. Anote.
+2. **Firewall**: abra `443` (canal do REP) e a porta da API. `3306` só se for
+   usar MySQL externo — o REP **não** conecta em MySQL, então em geral não precisa.
+3. **Certificado**: autoassado funciona (§11.2 de PROTOCOLOS). Coloque como
+   `cert.pem` / `chave.pem` no diretório, ou aponte `IDCLOUD_CERT` / `IDCLOUD_KEY`.
+4. **Banco**: `mysql -u root -p < schema_core.sql`; os schemas dos clientes são
+   criados pela API.
+5. **Variáveis** (`.env`): `IDCLOUD_PASS`, `JWT_SECRET`, `IZCLOUD_ADMIN_KEY` e
+   `REP_ADMIN_SENHA` **fortes**. `CORE_DB=izcloud_core`.
+6. **Primeiro cliente (setup)**:
    ```bash
-   curl -X POST http://<IP>:3100/api/auth/register \
+   curl -X POST http://<IP>:<porta_api>/api/auth/register \
      -H "x-admin-key: <IZCLOUD_ADMIN_KEY>" \
      -H "Content-Type: application/json" \
      -d '{"login":"empresa1","senha":"<senha>","nome_empresa":"Empresa 1","cnpj":"..."}'
    ```
-6. **Apontar o REP**: no `REPCONFIG.exe`, defina o IP do iDCloud = `<IP>:3100`
-   (campo `configOffSetIPiDCloud` / `txtIPCloud`).
-7. **Testar fluxo**: `login` → `/api/reps/probe` → `/api/reps` → `/api/afd/sync`.
+7. **Apontar o REP**: no `REPCONFIG.exe`, `txtIPCloud` = o IP da VPS. Só isso —
+   não existe campo de porta.
+8. **Reservar a coleta e testar**:
+   ```bash
+   curl -X POST http://<IP>:<porta_api>/api/reps/1/reservar-coleta \
+     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+     -d '{"minutos":30}'
+   curl -H "Authorization: Bearer $TOKEN" http://<IP>:<porta_api>/api/reps/1/coleta
+   ```
+   A vaga é obrigatória: sem ela a trava de série derruba a conexão.
 
-> Sem IP estático (ex.: Railway), use apenas o modo **FCGI IP-direto** do
-> `repClient.js` (o iZCloud puxa do REP), pois o REP não consegue empurrar.
-
----
+> **Sem IP fixo (ex.: Railway)**: o canal do REP não funciona — a borda da
+> Railway na 443 exige SNI/`Host` e o REP não envia nenhum dos dois. Nesses
+> casos a Railway serve a API e a linha de acesso (iDFace/iDFlex, que aceita
+> domínio), e o ponto fica para a VPS.
 
 ## 11. Próximos passos sugeridos
 
