@@ -10,9 +10,18 @@ data/afd/
 # temporarios (testes com stub)
 .tmp-*/
 
-# log do capturador de conexao do REP (rodar: node captura_rep.mjs)
+# capturadores de conexao do REP (rodar: node captura_rep.mjs / https_rep.mjs)
 captura_rep.log
 captura_rep.flag
 captura_rep.out
 captura_rep.err
 captura_*.bin
+https_rep.log
+https_rep.out
+https_rep.err
+rep_http_*.bin
+
+# certificado e chave do TLS de teste: sao delabora local, nunca versionar
+# (chave privada no repositorio e' risco mesmo em projeto de teste)
+cert.pem
+chave.pem
