@@ -10,7 +10,8 @@ import { probe, enviarUsuarios, lerUsuarios, mapearUsuario } from './repClient.j
 import { IdCloudClient } from './idcloud.js';
 import { gerarPorPeriodo } from './afd.js';
 import { sincronizarAfd, iniciarPoller } from './sync.js';
-import { getCorePool, getTenantPool, verificarConexaoCore, inicializarCore, criarCliente, listarClientes, criarUsuario, listarUsuarios, removerUsuario, criarConta, verificarConta, buscarConta, existeAdmin, listarEmpresas, criarEmpresa, atualizarEmpresa, listarContas, atualizarConta, resetarSenhaConta, listarTodasEmpresas, atualizarEmpresaAdmin, auditar, listarAuditoria, aplicarMigracoesTenant, gerarCredencialRep, listarCapturasRep, limparCapturasRep } from './core.js';
+import { getCorePool, getTenantPool, verificarConexaoCore, inicializarCore, criarCliente, listarClientes, criarUsuario, listarUsuarios, removerUsuario, criarConta, verificarConta, buscarConta, existeAdmin, listarEmpresas, criarEmpresa, atualizarEmpresa, listarContas, atualizarConta, resetarSenhaConta, listarTodasEmpresas, atualizarEmpresaAdmin, auditar, listarAuditoria, aplicarMigracoesTenant, gerarCredencialRep, listarCapturasRep, limparCapturasRep,
+  estadoColetaRep, listarColetasRep } from './core.js';
 import { login, authTenant, authConta, authAdmin, adminKey, requireAdmin, requireTenantAdmin, limiteTentativas, registrarFalha, limparFalhas, validarLogin, validarSenha } from './auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -514,6 +515,28 @@ app.use('/api/reps', authTenant);
 app.use('/api/pessoas', authTenant);
 app.use('/api/afd', authTenant);
 
+// ---------- Coleta pelo canal iDCloud ----------
+// A UI reserva a vaga do REP; quando o aparelho conecta na 443 da VPS, o
+// idcloudServer coleta o AFD. Estas rotas sao o painel disso.
+app.post('/api/reps/:id/reservar-coleta', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const min = Math.min(Math.max(Number(req.body?.minutos) || 30, 1), 240);
+    const { reservarVaga } = await import('./idcloudServer.js');
+    res.json({ ok: true, id_reps: id, reservado_ate: new Date(reservarVaga(id, min)).toISOString() });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+app.get('/api/reps/:id/coleta', async (req, res) => {
+  try { res.json(await estadoColetaRep(req.tenant.schema, req.params.id) || { id_reps: Number(req.params.id), coletas: 0 }); }
+  catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+app.get('/api/coletas', async (req, res) => {
+  try { res.json(await listarColetasRep(req.tenant.schema, req.query.limite)); }
+  catch (e) { res.status(502).json({ error: e.message }); }
+});
+
 // ---------- REPs (escopo do tenant) ----------
 app.post('/api/reps/probe', async (req, res) => {
   try { res.json(await probe(req.body.ip, req.body.porta || 443, req.body.usuario, req.body.senha)); }
@@ -732,6 +755,26 @@ app.use(async (req, res) => {
 
 // Poller silencioso multi-tenant (so roda se houver banco core)
 try { iniciarPoller(getCorePool, getTenantPool); } catch {}
+
+// Canal iDCloud: escuta TLS na 443 e coleta quando o REP conecta. So sobe se
+// houver certificado — em desenvolvimento e na Railway (que nao serve esse
+// canal) ele simplesmente nao existe, e o app segue normal pela API.
+const CERT_PEM = process.env.IDCLOUD_CERT || path.join(__dirname, 'cert.pem');
+const KEY_PEM = process.env.IDCLOUD_KEY || path.join(__dirname, 'chave.pem');
+if (fs.existsSync(CERT_PEM) && fs.existsSync(KEY_PEM)) {
+  import('./idcloudServer.js')
+    .then(({ criarServidor }) => criarServidor({
+      cert: fs.readFileSync(CERT_PEM),
+      key: fs.readFileSync(KEY_PEM),
+      porta: Number(process.env.IDCLOUD_PORTA || 443),
+      host: process.env.IDCLOUD_HOST || '0.0.0.0',
+    }))
+    .then(() => console.log(`[idcloud] canal ativo em ${process.env.IDCLOUD_PORTA || 443}`))
+    .catch((e) => console.error('[idcloud] nao subiu:', e.message));
+} else {
+  console.log('[idcloud] canal inativo (sem cert.pem/chave.pem) — a API segue normal');
+}
+
 
 // Cria/atualiza o esquema do core (idempotente) na inicializacao.
 const detalheErro = (e) => [e.code, e.errno, e.sqlMessage, e.message].filter(Boolean).join(' | ') || String(e);

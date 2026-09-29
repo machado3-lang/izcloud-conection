@@ -335,6 +335,22 @@ const TENANT_EXTRAS = {
     id INT AUTO_INCREMENT PRIMARY KEY,
     id_departamento INT NOT NULL, id_Equipamento INT NOT NULL,
     UNIQUE KEY uq_dep_equip (id_departamento, id_Equipamento))`,
+  // Estado da coleta pelo canal iDCloud. Sem isto a UI nao tem como dizer se o
+  // REP ja sincronizou, ate qual NSR, e qual foi o ultimo erro.
+  rep_coletas: `CREATE TABLE IF NOT EXISTS rep_coletas (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id_reps INT NOT NULL,
+    serial VARCHAR(32),
+    ultimo_nsr INT,
+    batidas INT DEFAULT 0,
+    total_coletado INT DEFAULT 0,
+    coletas INT DEFAULT 0,
+    conectado_em DATETIME,
+    ultima_coleta DATETIME,
+    ultimo_erro VARCHAR(255),
+    atualizado_em DATETIME,
+    UNIQUE KEY uq_rep (id_reps),
+    KEY idx_atualizado (atualizado_em))`,
 };
 
 export async function aplicarMigracoesTenant(schema) {
@@ -421,6 +437,56 @@ export async function aplicarMigracoesTenant(schema) {
 
   if (aplicados.length) console.log(`[migracao-tenant] ${schema}: ${aplicados.join(', ')}`);
   return aplicados;
+}
+
+// ---- Coleta do canal iDCloud ----
+// O REP nao empurra nada: ele abre a conexao TLS e espera. Quem conduz a coleta
+// e' o idcloudServer, entao o estado da coleta mora aqui, por tenant, para a UI
+// mostrar quem ja sincronizou e onde parou.
+
+export async function registrarConexaoRep(schema, { id_reps, serial }) {
+  const pool = getTenantPool(schema);
+  await pool.query(
+    `INSERT INTO rep_coletas (id_reps, serial, conectado_em, coletas, atualizado_em)
+     VALUES (?,?,NOW(),1,NOW())
+     ON DUPLICATE KEY UPDATE serial=VALUES(serial), conectado_em=NOW(),
+       coletas=coletas+1, ultimo_erro=NULL, atualizado_em=NOW()`,
+    [id_reps, String(serial || '').slice(0, 32) || null]);
+}
+
+export async function registrarColetaRep(schema, { id_reps, ultimoNsr, batidas, novas, erro }) {
+  const pool = getTenantPool(schema);
+  if (erro) {
+    await pool.query(
+      `INSERT INTO rep_coletas (id_reps, ultimo_erro, atualizado_em)
+       VALUES (?,?,NOW())
+       ON DUPLICATE KEY UPDATE ultimo_erro=VALUES(ultimo_erro), atualizado_em=NOW()`,
+      [id_reps, String(erro).slice(0, 255)]);
+    return;
+  }
+  await pool.query(
+    `INSERT INTO rep_coletas (id_reps, ultimo_nsr, batidas, total_coletado, ultima_coleta, atualizado_em)
+     VALUES (?,?,?,?,?,NOW(),NOW())
+     ON DUPLICATE KEY UPDATE ultimo_nsr=VALUES(ultimo_nsr), batidas=VALUES(batidas),
+       total_coletado=total_coletado+VALUES(total_coletado),
+       ultima_coleta=NOW(), ultimo_erro=NULL, atualizado_em=NOW()`,
+    [id_reps, ultimoNsr ?? null, batidas || 0, novas || 0]);
+}
+
+export async function estadoColetaRep(schema, id_reps) {
+  const [rows] = await getTenantPool(schema).query(
+    `SELECT id_reps, serial, ultimo_nsr, batidas, total_coletado, coletas,
+            conectado_em, ultima_coleta, ultimo_erro
+       FROM rep_coletas WHERE id_reps = ?`, [Number(id_reps)]);
+  return rows[0] || null;
+}
+
+export async function listarColetasRep(schema, limite = 100) {
+  const [rows] = await getTenantPool(schema).query(
+    `SELECT id_reps, serial, ultimo_nsr, batidas, total_coletado, coletas,
+            conectado_em, ultima_coleta, ultimo_erro
+       FROM rep_coletas ORDER BY atualizado_em DESC LIMIT ?`, [Math.min(Number(limite) || 100, 500)]);
+  return rows;
 }
 
 // ---- CRUD de clientes (tenants) ----

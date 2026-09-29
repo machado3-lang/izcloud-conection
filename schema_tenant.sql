@@ -163,3 +163,27 @@ CREATE TABLE IF NOT EXISTS templates (
 -- CREATE TABLE templates ( id BIGINT AUTO_INCREMENT PRIMARY KEY, id_pessoa INT NOT NULL,
 --   tipo VARCHAR(20), indice INT, dados LONGTEXT, DataAtualizacao DATETIME,
 --   UNIQUE KEY uq_tpl (id_pessoa, tipo, indice), KEY idx_pessoa (id_pessoa) );
+
+-- Estado da coleta pelo canal iDCloud, uma linha por REP.
+-- O REP nao empurra nada: ele so abre a conexao e espera. Quem conduz somos nos
+-- (ver idcloudServer.js). Sem esta tabela nao ha como mostrar na UI "qual REP
+-- ja sincronizou, ate qual NSR, e qual foi o ultimo erro" - que e' justamente
+-- o que o operador precisa para saber se o canal esta vivo.
+--
+-- `ultimo_nsr` e' o cursor: na proxima coleta pedimos o AFD a partir dele, para
+-- nao reprocessar o arquivo inteiro a cada conexao.
+CREATE TABLE IF NOT EXISTS rep_coletas (
+  id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+  id_reps         INT NOT NULL,
+  serial          VARCHAR(32),
+  ultimo_nsr      INT,                  -- maior NSR visto (ver idcloudServer)
+  batidas         INT DEFAULT 0,
+  total_coletado  INT DEFAULT 0,
+  coletas         INT DEFAULT 0,
+  conectado_em    DATETIME,
+  ultima_coleta   DATETIME,
+  ultimo_erro     VARCHAR(255),
+  atualizado_em   DATETIME,
+  UNIQUE KEY uq_rep (id_reps),
+  KEY idx_atualizado (atualizado_em)
+);

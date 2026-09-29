@@ -1,4 +1,4 @@
-// idcloudServer.js — o lado do servidor do canal iDCloud.
+// idcloudServer.js - o lado do servidor do canal iDCloud.
 //
 // COMO FUNCIONA (medido no REP, ver docs/PROTOCOLOS.md secao 12):
 //   1. o REP abre uma conexao TLS na 443 contra o IP configurado em txtIPCloud
@@ -7,7 +7,7 @@
 //   4. a sessao sai de  POST /login.fcgi  nessa mesma conexao
 //   5. get_afd.fcgi devolve o AFD como application/octet-stream
 //
-// Ou seja: e' a API FCGI de sempre (repClient.js), so que invertida — aqui o
+// Ou seja: e' a API FCGI de sempre (repClient.js), so que invertida - aqui o
 // servidor e' o cliente HTTP do FCGI.
 //
 // POR QUE A TRAVA DE SERIE E' OBRIGATORIA
@@ -19,7 +19,7 @@
 import tls from 'tls';
 import { parseAFD } from './afd.js';
 import { IdCloudClient } from './idcloud.js';
-import { getTenantPool } from './core.js';
+import { getTenantPool, registrarConexaoRep, registrarColetaRep, estadoColetaRep } from './core.js';
 
 const log = (...a) => console.log('[idcloud]', ...a);
 
@@ -63,8 +63,11 @@ class SessaoRep {
   constructor(socket) {
     this.socket = socket;
     this.buffer = Buffer.alloc(0);
-    this.espera = new Map();
-    this.seq = 0;
+    // Slot unico de pendencia. Os comandos sao sempre sequenciais (um por vez,
+    // aguardando a resposta), entao um mapa com id nao traria ganho nenhum --
+    // so uma chance a mais de bug de ordenacao.
+    this.pendente = null;
+    this.primeira = true;
     this.session = null;
     this.nSerie = null;
     socket.on('data', (d) => this._chegou(d));
@@ -73,48 +76,57 @@ class SessaoRep {
   }
 
   _falhou(motivo) {
-    for (const [, p] of this.espera) p.rej(new Error(motivo));
-    this.espera.clear();
+    if (this.pendente) { this.pendente.rej(new Error(motivo)); this.pendente = null; }
   }
 
   _chegou(d) {
     this.buffer = Buffer.concat([this.buffer, d]);
     while (this.buffer.length) {
-      const fim = this.buffer.indexOf('\r\n\r\n');
+      // O REP mistura \n e \r\n nos headers (medido na captura), entao aceito os
+      // dois terminadores. Sem isso a resposta nunca "fecha" e tudo da timeout.
+      let fim = this.buffer.indexOf('\r\n\r\n');
+      let salto = 4;
+      if (fim < 0) { fim = this.buffer.indexOf('\n\n'); salto = 2; }
       if (fim < 0) break;
       const cab = this.buffer.subarray(0, fim).toString('latin1');
       const m = /content-length:\s*(\d+)/i.exec(cab);
       const total = Number(m ? m[1] : 0);
-      if (this.buffer.length < fim + 4 + total) break;
-      const corpo = this.buffer.subarray(fim + 4, fim + 4 + total).toString('utf-8');
-      this.buffer = this.buffer.subarray(fim + 4 + total);
+      if (this.buffer.length < fim + salto + total) break;
+      const corpo = this.buffer.subarray(fim + salto, fim + salto + total).toString('utf-8');
+      this.buffer = this.buffer.subarray(fim + salto + total);
       const status = Number((/HTTP\/1\.\d\s+(\d+)/.exec(cab) || [])[1] || 0);
-      const id = Number((/^X-Seq:\s*(\d+)/i.exec(cab) || [])[1] || 0);
-      const p = this.espera.get(id);
-      if (!p) continue;
-      this.espera.delete(id);
-      let dados = null, binario = null, erro = null;
+      const p = this.pendente;
+      if (!p) continue;                       // resposta sem pedido: descarta
+      this.pendente = null;
+      clearTimeout(p.timer);
+      let dados = null, binario = null;
       try { dados = JSON.parse(corpo); } catch { binario = corpo; }
-      if (status >= 400) erro = new Error((dados && dados.error) || `HTTP ${status}`);
-      else if (dados && dados.error) erro = new Error(dados.error);
+      if (status >= 400) { p.rej(new Error((dados && dados.error) || `HTTP ${status}`)); continue; }
       p.res({ dados, binario, status });
     }
   }
 
   pedir(comando, corpo = {}, { binario = false } = {}) {
     if (this.socket.destroyed) return Promise.reject(new Error('conexao fechada'));
-    const id = ++this.seq;
+    if (this.pendente) return Promise.reject(new Error('comando anterior ainda em andamento'));
     const b = Buffer.from(JSON.stringify(corpo), 'utf-8');
     const req = Buffer.from(
       `POST /${comando}.fcgi HTTP/1.1\r\nHost: idcloud\r\nUser-Agent: iZCloud/1.0\r\n` +
-      `Accept: */*\r\nContent-Type: application/json\r\nX-Seq: ${id}\r\n` +
+      `Accept: */*\r\nContent-Type: application/json\r\n` +
       `Content-Length: ${b.length}\r\nConnection: keep-alive\r\n\r\n`, 'latin1');
     return new Promise((res, rej) => {
-      this.espera.set(id, { res, rej });
-      this.socket.write(Buffer.concat([req, b]));
-      setTimeout(() => {
-        if (this.espera.has(id)) { this.espera.delete(id); rej(new Error(`${comando}: timeout`)); }
-      }, 30000).unref?.();
+      const timer = setTimeout(() => { this.pendente = null; rej(new Error(`${comando}: timeout`)); }, 30000);
+      timer.unref?.();
+      this.pendente = { res, rej, timer };
+      // O REP precisa de um instante depois do handshake antes de aceitar o
+      // primeiro comando: mandando na hora ele ignora e a resposta nunca vem.
+      const escrever = () => {
+        if (this.pendente?.timer !== timer) return;   // ja expirou/cancelou
+        try { this.socket.write(Buffer.concat([req, b])); }
+        catch (e) { this.pendente = null; clearTimeout(timer); rej(e); }
+      };
+      if (this.primeira) { this.primeira = false; setTimeout(escrever, 500); }
+      else escrever();
     });
   }
 }
@@ -153,13 +165,43 @@ export async function atenderConexao(socket) {
 }
 
 // Baixa o AFD do REP, sem tocar no banco. Separado da gravacao de proposito:
-// dá para exercitar o canal inteiro numa maquina sem MySQL.
-export async function baixarAfd(ctx, { limite = 2000, offset = 0 } = {}) {
-  const r = await ctx.rep.pedir('get_afd', { session: ctx.rep.session, limit: limite, offset }, { binario: true });
+// da para exercitar o canal inteiro numa maquina sem MySQL.
+//
+// CUIDADO com o cursor: o `offset` e o `limit` do REP contam LINHAS do arquivo,
+// nao NSR. E o arquivo comeca pelo rodape e pelos registros antigos de 2017 —
+// as batidas (tipo 3) so aparecem bem depois. Por isso o limite padrao e alto:
+// com limit=10 volta so cabecalho e registros velhos, e parece que nao ha
+// nenhuma batida.
+// Teto que o REP aceita em get_afd. Acima disso ele responde
+// "'limit' máximo é 1000" — medido no aparelho.
+export const LIMITE_AFD_MAX = 1000;
+
+// LIMITE REAL DO APARELHO (medido, nao chute):
+//   - o limite máximo é 1000
+//   - o 'offset' e' aceito mas IGNORADO
+//   - nsrInicial, start, from, skip, dataInicio, mode, coletor... nao paginam
+//   => o REP sempre devolve as PRIMEIRAS N linhas do arquivo
+//
+// Isso significa que so vemos o comeco do AFD. Como o arquivo cresce anexando no
+// fim, as batidas mais novas ficam fora do alcance enquanto ele nao rotacionar.
+// Por isso a gravacao tem de ser idempotente por NSR (ver unico em afd) e a
+// coleta guarda o maior NSR visto: quando o aparelho rotacionar, a janela
+// avanca e o resto entra sozinho.
+export async function baixarAfd(ctx, { limite = LIMITE_AFD_MAX, offset = 0 } = {}) {
+  const limiteReal = Math.min(Number(limite) || LIMITE_AFD_MAX, LIMITE_AFD_MAX);
+  const r = await ctx.rep.pedir('get_afd', { session: ctx.rep.session, limit: limiteReal, offset }, { binario: true });
   const texto = (r.binario || '').trim();
-  if (!texto) return { texto: '', batidas: 0 };
+  if (!texto) return { texto: '', batidas: 0, linhas: 0, ultimoNsr: null, paginas: 0 };
+  const linhas = texto.split(/\r?\n/).filter((l) => l.trim());
   const { registros } = parseAFD(texto);
-  return { texto, batidas: registros.length, ultimoNsr: registros.at(-1)?.nsr ?? null };
+  return {
+    texto,
+    linhas: linhas.length,
+    batidas: registros.length,
+    ultimoNsr: registros.at(-1)?.nsr ?? null,
+    paginas: 1,
+    truncado: linhas.length >= limiteReal,
+  };
 }
 
 // Baixa o AFD e grava no tenant. Devolve quantas batidas entraram.
@@ -184,10 +226,39 @@ export async function lerEmpresa(ctx) {
   return r.dados?.company || null;
 }
 
+// Coleta completa de uma conexao: baixa o AFD a partir do cursor, grava no
+// tenant e atualiza o estado. E' o que roda quando o REP conecta.
+export async function coletar(ctx, { limite = LIMITE_AFD_MAX } = {}) {
+  const schema = ctx.schema;
+  await registrarConexaoRep(schema, { id_reps: ctx.id_reps, serial: ctx.rep.nSerie });
+  try {
+    const est = await estadoColetaRep(schema, ctx.id_reps);
+    const { texto, batidas, ultimoNsr, truncado } = await baixarAfd(ctx, { limite, offset: 0 });
+    if (!texto) {
+      await registrarColetaRep(schema, { id_reps: ctx.id_reps, batidas: 0, novas: 0 });
+      return { batidas: 0, novas: 0, vazio: true };
+    }
+    const client = new IdCloudClient(getTenantPool(schema));
+    // Idempotente por NSR: o REP devolve sempre o comeco do arquivo, entao a
+    // mesma janela volta a cada coleta. Quem evita duplicar e' o indice unico
+    // (id_Equipamento, NSR) da tabela afd.
+    const novas = await client.salvarAfd(ctx.rep.nSerie, texto.split(/\r?\n/));
+    const anterior = Number(est?.ultimo_nsr || 0);
+    const avancou = !ultimoNsr || !anterior || Number(ultimoNsr) > anterior;
+    await registrarColetaRep(schema, { id_reps: ctx.id_reps, ultimoNsr, batidas, novas });
+    log(`coleta de ${ctx.rep.nSerie}: ${batidas} batidas na janela, ${novas} novas` +
+        (truncado ? ' (janela truncada em 1000 linhas: o aparelho nao pagina)' : ''));
+    return { batidas, novas, ultimoNsr, avancou, truncado };
+  } catch (e) {
+    await registrarColetaRep(schema, { id_reps: ctx.id_reps, erro: e.message });
+    throw e;
+  }
+}
+
 // `aoConectar` recebe o contexto autenticado e decide o que fazer com a
 // conexao (baixar AFD, ler usuarios, ...). O socket fecha quando o callback
-// termina — a sessao FCGI vale so enquanto a conexao estiver viva.
-export function criarServidor({ cert, key, porta = 443, host, aoConectar }) {
+// termina - a sessao FCGI vale so enquanto a conexao estiver viva.
+export function criarServidor({ cert, key, porta = 443, host, aoConectar = coletar }) {
   const servidor = tls.createServer({ cert, key, minVersion: 'TLSv1.2', maxVersion: 'TLSv1.2' }, (s) => {
     s.setTimeout(120000, () => s.destroy());
     atenderConexao(s)

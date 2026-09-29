@@ -780,3 +780,133 @@ isso e' do cliente de desktop — o firmware nao contem `rhidv2`, `Bearer` nem
 `Authorization` (0 ocorrencias). O proximo passo com maior chance de resolver e'
 descompilar o `ControliD.iDCloud.LocalService.exe`, que e' o outro lado exato
 desse canal.
+## 12. O canal iDCloud, resolvido (29/09/2026)
+
+O REP foi apontado para `192.168.100.179` (esta maquina) e conduzido comando a
+comando. Nao ha misterio: **o canal iDCloud e' a propria API FCGI do REP, sobre
+TLS na 443, com quem conduzindo sendo o SERVIDOR.**
+
+### 12.1 A sequencia
+
+Numa unica conexao TLS, sem o REP enviar um byte sequer:
+
+```text
+POST /login.fcgi                  {"login":"admin","password":"admin"}
+  -> {"session":"cJHFbXtyck33dghdWvVKCOkl"}
+POST /get_about.fcgi              {}
+  -> {"mac":"FC:52:CE:80:E1:A5","nSerie":"00014003750029470",...}
+POST /get_system_information.fcgi {}
+  -> {"user_count":20,"template_count":33,"last_nsr":38530,...}
+POST /get_afd.fcgi                {"limit":1000,"offset":0,"session":"..."}
+  -> application/octet-stream, o arquivo AFD
+POST /load_users.fcgi             {"limit":3,"offset":0,"session":"..."}
+  -> {"users":[...]}
+POST /load_company.fcgi           {"session":"..."}
+  -> {"company":{"name":"FERNANDO DE CASTRO",...}}
+```
+
+Por isso o REP "nao mandava nada": ele esta se comportando como servidor,
+esperando ser---ido. Nao ha protocolo binario secreto, nem MySQL, nem
+obfuscacao.
+
+### 12.2 Transporte
+
+| Item | Medido |
+|---|---|
+| Porta | **443**, fixa no firmware |
+| TLS | 1.2, `ECDHE-RSA-AES128-GCM-SHA256` |
+| SNI | ausente (conecta por IPv4 literal) |
+| ALPN | ausente |
+| Certificado do cliente | nao manda |
+| Certificado do servidor | **autoassado e aceito** |
+
+O firmware embute a CA (`CN=Control iD CA`, em 2396132, com as validades
+`20010101000001`/`20300101000001`), mas usa para gerar o certificado **do
+proprio REP** (CN=`192.168.100.132`, achado no config de 128 KB) - nao para
+validar o servidor do iDCloud. Logo: **nao ha compra de certificado**.
+
+### 12.3 A porta do iDCloud NAO segue a do servidor web
+
+O `set_idcloud` aceita `enable` e `interval` e **ignora tudo o mais** (devolve
+`{}` ate para chave inventada - testei `port`, `porta`, `tcp_port`, `xyz`).
+
+Teste decisivo: com o servidor web do REP em 5432 e o bloco de config
+confirmando `IP=192.168.100.179` + `interval`, ouvindo nas duas portas:
+
+```text
+escutando 192.168.100.179: 443, 5432, 8080, 8443, 2098, 33306
+>>> CONEXAO NA PORTA 443     TLSv1.2  ECDHE-RSA-AES128-GCM-SHA256
+>>> CONEXAO NA PORTA 5432    (nenhuma)
+```
+
+E o bloco do iDCloud no config nao tem onde guardar porta (`5 flags + IP(4) +
+reservado(3) + interval(4)`). A porta do web server, essa sim, e' configuravel
+(offset 2432).
+
+**Consequencia: a Railway esta fora.** A 443 e' a borda (a documentacao diz
+"Railway's edge terminates TLS on 443") e todo trafego passa por ela; o REP nao
+manda SNI nem `Host` utilizavel. Alem disso a Railway **nao deixa escolher** a
+porta publica do TCP proxy (ela gera uma, ex. `shuttle.proxy.rlwy.net:15140`),
+e so permite **um** TCP proxy por servico. O proxy em 5432 portanto nao serve
+para o REP.
+
+### 12.4 O numero curto de iDCloud
+
+Nos 19 usuarios do REP, **um so tem numero curto**:
+
+```text
+pis=123   ( 3 dig)   code=0   rfid=0   ADMIN
+```
+
+Todos os outros tem PIS de 11 digitos. Esse e' o numero que a Control iD gera
+ao habilitar o iDCloud e que o tecnico cadastra no REP no lugar do PIS/CPF -
+serve para amarrar o aparelho a uma empresa na nuvem. Como o REP e' passivo
+nesse canal, o numero e' informacao de bookkeeping do lado da nuvem, nao um
+segredo que o aparelho apresenta.
+
+### 12.5 O AFD: limite real do aparelho
+
+```text
+201 linhas, tipos: {"0":1, "2":2, "3":148, "4":2, "5":43, "6":5}
+```
+
+- **tipo 3** sao as batidas (942 na janela de 1000 linhas);
+- tipo 0 e' o rodape, tipo 2 a empresa, tipo 5 eventos de operador (com nome).
+
+O `get_afd` deste firmware tem tres limites medidos:
+
+1. `limit` maximo **1000** (acima: `'limit' m-ximo - 1000`);
+2. `offset` e' aceito mas **ignorado**;
+3. `nsrInicial`, `start`, `from`, `skip`, `dataInicio`, `mode`, `coletor`...
+   **nao paginam** - todos devolvem as mesmas primeiras N linhas.
+
+Ou seja: **da para ler so o comeco do AFD**, e como o arquivo cresce anexando no
+fim, as batidas mais novas ficam fora de alcance ate o aparelho rotacionar. O
+cliente oficial contorna isso porque pagina no nivel da nuvem
+(`download?idEquipamento=&nsrInicial=&limit=&coletor=` contra o `rhidv2`), nao no
+aparelho.
+
+Consequencias no codigo:
+
+- `baixarAfd` faz **uma** requisicao e marca `truncado` - nao pagina, para nao
+  gravar a mesma janela 20 vezes (erro que eu cometi e que o teste pegou);
+- a gravacao e' **idempotente por NSR**: a tabela `afd` ja tem
+  `UNIQUE (id_Equipamento, NSR)`, entao a janela que volta sempre e' absorvida;
+- `rep_coletas` guarda `ultimo_nsr` para a UI mostrar se a coleta avanca.
+
+### 12.6 O que foi construido
+
+`idcloudServer.js`:
+
+- `atenderConexao` - `get_about` primeiro, compara o `nSerie` com o REP esperado
+  daquele vagao, e so entao faz `login`. Sem vaga, derruba a conexao.
+- `SessaoRep` - cliente FCGI sobre a conexao TLS. Slot unico de pendencia (os
+  comandos sao sequenciais), aceita fim de linha em `\n` e `\r\n` (o REP mistura
+  os dois), e espera 500 ms antes do primeiro comando (mandando na hora o
+  aparelho ignora e a resposta nunca vem).
+- `coletar` - baixa o AFD, grava e atualiza o estado.
+- `criarServidor` - sobe se `cert.pem`/`chave.pem` existirem; caso contrario o
+  app segue normal so pela API.
+
+Rotas: `POST /api/reps/:id/reservar-coleta`, `GET /api/reps/:id/coleta`,
+`GET /api/coletas`.

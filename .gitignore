@@ -25,3 +25,12 @@ rep_http_*.bin
 # (chave privada no repositorio e' risco mesmo em projeto de teste)
 cert.pem
 chave.pem
+
+# sondagens e dumps do canal iDCloud
+descobre_porta.log
+teste_offset.log
+dump_afd.log
+afd_recebido.txt
+tls_probe.log
+tls_comandos.log
+tls_fluxo.log
