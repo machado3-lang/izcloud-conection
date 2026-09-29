@@ -59,7 +59,7 @@ const COLUNAS_ESPERADAS = {
 // Tabelas que o app exige. Se `usuarios` faltar, o SELECT do login estoura com
 // ER_NO_SUCH_TABLE e TODO login devolve 503. A ordem de criacao no
 // schema_core.sql importa: um CREATE que falhe nao pode impedir os seguintes.
-const TABELAS_ESPERADAS = ['contas', 'clientes', 'usuarios', 'admin_auditoria'];
+const TABELAS_ESPERADAS = ['contas', 'clientes', 'usuarios', 'admin_auditoria', 'capturas_rep'];
 
 // Diagnostico: conecta ao core, as tabelas existem e as colunas obrigatorias
 // existem?
@@ -216,10 +216,51 @@ export async function aplicarMigracoes() {
     await addColumnSeFaltar(conn, 'clientes', 'endereco', 'VARCHAR(200)');
     await addColumnSeFaltar(conn, 'clientes', 'responsavel_nome', 'VARCHAR(120)');
     await addColumnSeFaltar(conn, 'clientes', 'responsavel_cpf', 'VARCHAR(20)');
+    // Coletor do canal iDCloud. Precisa existir antes de qualquer REP tentar
+    // falar com a gente: se a tabela faltar, a captura e' perdida em silencio e
+    // a unica chance de ver o que o aparelho manda e' perdida junto.
+    //
+    // Falha aqui NAO pode derrubar a subida: e' uma tabela de diagnostico. Se o
+    // core tem permissao de DDL mas nao de criar tabela nova (ou o DDL do
+    // schema_core.sql ja falhou), o app tem que subir assim mesmo — senao o
+    // retry de 3 tentativas segura o boot por ~6s e o login demora junto.
+    try {
+      await conn.query(`CREATE TABLE IF NOT EXISTS capturas_rep (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        origem VARCHAR(45),
+        metodo VARCHAR(10),
+        caminho VARCHAR(255),
+        cabecalhos TEXT,
+        corpo_hex MEDIUMTEXT,
+        corpo_txt MEDIUMTEXT,
+        tam_bytes INT,
+        corte TINYINT DEFAULT 0,
+        criado_em DATETIME,
+        KEY idx_data (criado_em)
+      )`);
+    } catch (e) {
+      console.error('[migracao] capturas_rep nao pode ser criada — as capturas do canal iDCloud nao serao gravadas:',
+        [e.code, e.sqlMessage || e.message].filter(Boolean).join(' | '));
+    }
   } finally {
     await conn.end();
   }
   return true;
+}
+
+// Lista as capturas do canal iDCloud, mais recentes primeiro. `comCorpo` traz
+// hex/texto (util para ver o bytes crus); sem ele, so o resumo.
+export async function listarCapturasRep(limite = 50, comCorpo = false) {
+  const cols = comCorpo
+    ? 'id, origem, metodo, caminho, cabecalhos, corpo_hex, corpo_txt, tam_bytes, corte, criado_em'
+    : 'id, origem, metodo, caminho, tam_bytes, corte, criado_em';
+  const [rows] = await getCorePool().query(
+    `SELECT ${cols} FROM capturas_rep ORDER BY id DESC LIMIT ?`, [Math.min(Number(limite) || 50, 500)]);
+  return rows;
+}
+
+export async function limparCapturasRep() {
+  await getCorePool().query('DELETE FROM capturas_rep');
 }
 
 // Cria (ou promove) a conta de administrador da plataforma a partir das env vars
@@ -323,7 +364,7 @@ export async function aplicarMigracoesTenant(schema) {
       'WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',
       [schema, tabela, coluna]
     );
-    if (ex[0].n === 0) {
+    if (!Number(ex[0]?.n || 0)) {
       await pool.query(`ALTER TABLE \`${tabela}\` ADD COLUMN \`${coluna}\` ${tipo}`);
       aplicados.push(`${tabela}.${coluna}`);
     }
@@ -365,9 +406,12 @@ export async function aplicarMigracoesTenant(schema) {
   const [dup] = await pool.query(
     'SELECT Rfid, COUNT(*) AS c FROM pessoas WHERE Rfid IS NOT NULL GROUP BY Rfid HAVING c > 1'
   );
-  if (!idx[0].n) {
+  // COUNT(*) sempre devolve uma linha no MySQL de verdade, mas um driver mal
+  // configurado (ou um proxy) pode devolver vazio. Ler [0].n direto rebentaria
+  // a migration inteira em vez de so pular este passo.
+  if (!Number(idx[0]?.n || 0)) {
     if (dup.length) {
-      console.error(`[migracao-tenant] ${schema}: ${dup.length} RFID(s) repetido(s) — ` +
+      console.error(`[migracao-tenant] ${schema}: ${dup.length} RFID(s) repetido(s) - ` +
         'indice unico de Rfid NAO criado. Resolva antes de conectar um REP.');
     } else {
       await pool.query('ALTER TABLE pessoas ADD UNIQUE KEY uq_rfid (Rfid)');

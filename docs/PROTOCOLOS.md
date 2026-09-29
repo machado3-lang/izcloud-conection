@@ -465,3 +465,96 @@ Arquivos locais relevantes:
 - `C:\Producao\Gerenciador REPs\AFD Downloader\iDClassREP.dll` — cliente FCGI do REP
 - `C:\Producao\Gerenciador REPs\app_idface.py` — script local de teste do iDFace
   (`http://{ip}/login.fcgi`, sessão) — outro protocolo, distinto do Push
+
+## 9. Sondagem no REP real (28/09/2026)
+
+Sondado o REP de teste em `192.168.100.132` (iDClass Mult, admin/admin, HTTPS
+na 443):
+
+| Leitura | Resultado |
+|---|---|
+| `get_about` | `nSerie = "00014003750029470"`, `versionFW = 1048`, `versionMRP = 1560` |
+| `get_idcloud` | `{"enable": true, "interval": 2078000}` -- **o canal iDCloud esta LIGADO** |
+| `get_system_network` | `192.168.100.132/24`, gateway `192.168.100.1` |
+| `get_configuration` | **128 KB de binario cru** (131072 bytes), nao JSON |
+
+### 9.1 O serial em hexadecimal tem 11 digitos
+
+Confirma a hipotese, e fecha o `id_Equipamento`:
+
+.. code-block:: text
+
+    00014003750029470  (decimal)  =  0xCBC808BC89E  (11 digitos hex)
+
+O `11` da documentacao oficial nao e largura de `INT`: e' o tamanho do
+serial em hex. `INT` (32 bits) nao comporta esse valor em nenhuma encoding.
+**BIGINT e' obrigatorio**, e `Serial VARCHAR(32)` guarda o texto.
+
+### 9.2 A configuracao e' um blob binario com CRC32
+
+O IP do iDCloud esta gravado **como 4 bytes**, nao como texto:
+
+.. code-block:: text
+
+    offset 2744: 02 01 01 01 01            flags
+    offset 2749: 45 2e 2e 70               69.46.46.112  <- o IP gravado
+    offset 2756: 30 b5 1f 00               2078000 LE    <- o mesmo interval
+    offset 2766: "00014003750029470"        o serial, em ASCII
+
+Tres conclusoes que mudam o plano:
+
+1. **A porta nao esta na configuracao.** Depois do IP vem o `interval`, que casa
+   exatamente com o `get_idcloud`. Busquei 3306, 3307, 33060, 443, 8080, 8443
+   e 2098 no blob inteiro: **nenhuma esta la**. A porta e' **hardcoded no
+   firmware** e so da para descobrir observando a conexao.
+2. **Nao ha campo de usuario/senha de banco** em lugar nenhum do blob. A doc
+   oficial manda configurar credencial de MySQL no iDCloud; este aparelho nao
+   tem onde guardar uma. Isso enfraquece a hipotese de MySQL direto.
+3. `set_configuration` so aceita **JSON** (form-urlencoded da
+   `Unsupported Content-Type`) e valida um **CRC32** sobre o `binary` em
+   base64. O CRC ainda nao foi quebrado, entao o iZCloud nao mexe na
+   configuracao do aparelho sozinho -- quem configura e' o `REPCONFIG.exe`.
+
+No config aparece tambem um certificado CN=`192.168.100.132` e chave privada
+de 2048 bits. E' o certificado **do servidor web do proprio REP** (e' por ele
+que ele responde em HTTPS na 443), nao credencial de iDCloud.
+
+### 9.3 O `/push` do pontoweb e' especulativo
+
+`C:\Producao\pontoweb` e `C:\Producao\idacessoweb` tem um endpoint `/push`
+com polling HTTP. **Nao e' o iDCloud da Control iD** e nunca foi testado contra
+um aparelho:
+
+- o backend e' Express + arquivo JSON, **sem `mysql2`** (zero MySQL nos dois);
+- o `tipo_conexao: 'idcloud'` do pontoweb so significa "falar com o meu
+  servidor HTTP em vez do IP direto" -- tres `fetch` contra a propria API;
+- o parser de eventos e' um chute que aceita `transactions`, `events`,
+  `logs`, `markings`, `access_logs` e campos
+  `user_id`/`userId`/`id_user`/`pis`/`cpf` "no que vier".
+
+O que **e'** real e reaproveitavel: o bloco `push_server` gravado por
+`set_configuration` com `push_remote_address`, `push_request_period` e
+`push_attributes: serial=...`. E' o mecanismo que faz o REP iniciar a
+conexao -- e o `push_remote_address` aceita **URL**, o que resolveria o
+problema do IP fixo. Falta confirmar que este firmware honors esse bloco.
+
+### 9.4 O coletor no iZCloud
+
+`POST /push` responde `200` para qualquer coisa e grava os bytes crus em hex
+e em texto, justamente para a tentativa nao se perder. Leitura em
+`GET /api/admin/capturas?corpo=1` (so admin).
+
+Para **descobrir a porta**, o jeito e' ver a conexao chegando:
+
+.. code-block:: bash
+
+    node captura_rep.mjs          # escuta 33 portas em 192.168.100.179
+
+com o `txtIPCloud` do REP apontado para `192.168.100.179` (esta maquina,
+mesma sub-rede). E' teste **de diagnostico**, nao de deploy.
+
+.. warning::
+
+   O capturador escuta a 3306 entre outras. Se ficar rodando enquanto a suite
+   e2e sobe, ela conversa com o capturador em vez do MySQL e os testes passam
+   por engano. Ja aconteceu. Pare o capturador antes de rodar qualquer teste.

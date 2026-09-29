@@ -9,3 +9,9 @@ data/afd/
 
 # temporarios (testes com stub)
 .tmp-*/
+
+# log do capturador de conexao do REP (rodar: node captura_rep.mjs)
+captura_rep.log
+captura_rep.flag
+captura_rep.out
+captura_rep.err

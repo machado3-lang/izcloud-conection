@@ -1,6 +1,6 @@
 // server.js — API multi-tenant do iZCloud (nossa nuvem para REPs 1510/671)
 import 'dotenv/config';
-import express from 'express';
+import express, { Router } from 'express';
 import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
@@ -10,7 +10,7 @@ import { probe, enviarUsuarios, lerUsuarios, mapearUsuario } from './repClient.j
 import { IdCloudClient } from './idcloud.js';
 import { gerarPorPeriodo } from './afd.js';
 import { sincronizarAfd, iniciarPoller } from './sync.js';
-import { getCorePool, getTenantPool, verificarConexaoCore, inicializarCore, criarCliente, listarClientes, criarUsuario, listarUsuarios, removerUsuario, criarConta, verificarConta, buscarConta, existeAdmin, listarEmpresas, criarEmpresa, atualizarEmpresa, listarContas, atualizarConta, resetarSenhaConta, listarTodasEmpresas, atualizarEmpresaAdmin, auditar, listarAuditoria, aplicarMigracoesTenant, gerarCredencialRep } from './core.js';
+import { getCorePool, getTenantPool, verificarConexaoCore, inicializarCore, criarCliente, listarClientes, criarUsuario, listarUsuarios, removerUsuario, criarConta, verificarConta, buscarConta, existeAdmin, listarEmpresas, criarEmpresa, atualizarEmpresa, listarContas, atualizarConta, resetarSenhaConta, listarTodasEmpresas, atualizarEmpresaAdmin, auditar, listarAuditoria, aplicarMigracoesTenant, gerarCredencialRep, listarCapturasRep, limparCapturasRep } from './core.js';
 import { login, authTenant, authConta, authAdmin, adminKey, requireAdmin, requireTenantAdmin, limiteTentativas, registrarFalha, limparFalhas, validarLogin, validarSenha } from './auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -28,7 +28,59 @@ app.set('trust proxy', true);
 const ORIGENS = (process.env.IZCLOUD_ORIGENS || '').split(',').map((s) => s.trim()).filter(Boolean);
 app.use(cors(ORIGENS.length ? { origin: ORIGENS, credentials: true } : { origin: false }));
 
+// ---------- Canal iDCloud: captura bruta ----------
+// Registrado ANTES do express.json, de propenso. Esta e a rota que o REP tenta
+// chamar (o firmware tem o IP da nuvem gravado na config e o iDCloud ligado:
+// get_idcloud -> {"enable":true}). Ainda nao sabemos o que ele manda nem em que
+// porta, entao a rota responde 200 para QUALQUER coisa e guarda os bytes crus.
+// Depois do express.json seria inutil: um corpo nao-JSON seria rejeitado com 400
+// antes de alguem ver, e um handshake de MySQL/TLS nem chega a ser HTTP.
+//
+// Por que isso e' seguro: e' um coletor de leitura, nao cria nem altera nada. O
+// que impede virar storage DoS e' o limite de tamanho e a rotacao de linhas.
+const CAPTURA_LIMITE = 256 * 1024;      // 256 KB de corpo por captura
+const CAPTURA_MAX_LINHAS = 500;          // e' o que fica no banco
+
+// Precisa ser um Router: express.raw() devolve um MIDDLEWARE, nao um app
+// (chamar .all() nele quebra na subida do processo).
+const captura = Router();
+
+// O express.raw fica NAS ROTAS, nao no Router. Com `type: () => true` montado
+// globalmente ele consome o corpo de TODAS as requisicoes e o express.json
+// depois ve um Buffer em vez de objeto — o login passava a receber
+// "Login invalido" mesmo com credencial boa.
+const corpoBruto = express.raw({ type: () => true, limit: '4mb' });
+
+captura.all('/push', corpoBruto, async (req, res) => {
+  const corpo = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  const hex = corpo.subarray(0, CAPTURA_LIMITE).toString('hex');
+  const txt = corpo.subarray(0, CAPTURA_LIMITE).toString('latin1');
+  try {
+    const core = getCorePool();
+    await core.query(
+      `INSERT INTO capturas_rep (origem, metodo, caminho, cabecalhos, corpo_hex, corpo_txt, tam_bytes, corte, criado_em)
+       VALUES (?,?,?,?,?,?,?,?,NOW())`,
+      [String(req.ip || '').slice(0, 45), req.method, String(req.originalUrl || '').slice(0, 255),
+        JSON.stringify(req.headers).slice(0, 60000), hex, txt, corpo.length, corpo.length > CAPTURA_LIMITE ? 1 : 0]);
+    await core.query(
+      `DELETE FROM capturas_rep WHERE id NOT IN
+       (SELECT id FROM (SELECT id FROM capturas_rep ORDER BY id DESC LIMIT ${CAPTURA_MAX_LINHAS}) x)`);
+    console.log(`[captura] ${req.method} ${req.originalUrl} de ${req.ip} - ${corpo.length} bytes`);
+  } catch (e) {
+    console.error('[captura] falha ao gravar:', e.message);
+  }
+  // Resposta tolerante: o aparelho espera JSON. "transactions" vazio porque e'
+  // o formato que o push oficial usa para dizer "nada a fazer".
+  res.status(200).json({ transactions: [] });
+});
+
+// Variantes que o aparelho pode estar chamando, todas com o mesmo coletor.
+captura.all(['/api/push', '/api/push/poll', '/event', '/api/push/event', '/result', '/api/push/result'],
+  corpoBruto, (req, res) => res.status(200).json({ transactions: [] }));
+app.use(captura);
+
 // 50MB de JSON em rota publica e um DoS facil; 20MB sobra para import de AFD.
+// (A captura do REP ja foi registrada acima, de proposito, antes deste parser.)
 app.use(express.json({ limit: '20mb' }));
 
 // Headers basicos de seguranca. Sem CSP porque a UI e um unico HTML com
@@ -385,6 +437,18 @@ app.put('/api/admin/empresas/:id', async (req, res) => {
 // ---- Auditoria ----
 app.get('/api/admin/auditoria', async (req, res) => {
   try { res.json(await listarAuditoria(req.query.limite)); } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Capturas do canal iDCloud. `?corpo=1` traz hex e texto dos bytes crus — e' o
+// que revela o protocolo quando o REP conseguir falar.
+app.get('/api/admin/capturas', async (req, res) => {
+  try {
+    res.json(await listarCapturasRep(req.query.limite, req.query.corpo === '1' || req.query.corpo === 'true'));
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+app.delete('/api/admin/capturas', async (req, res) => {
+  try { await limparCapturasRep(); res.json({ ok: true }); } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
 // ---------- Usuarios/operadores do tenant (multi-usuario por empresa) ----------

@@ -72,6 +72,25 @@ CREATE TABLE IF NOT EXISTS admin_auditoria (
   KEY idx_data (criado_em)
 );
 
+-- Captura bruta do que o REP manda no canal iDCloud (ver docs/PROTOCOLOS.md).
+-- Guardo os bytes como hex E como texto porque ainda nao sabemos se o que chega
+-- e' JSON, XML, binario ou TLS. Sem isso, a primeira tentativa de descobrir o
+-- protocolo se perde: o Express rejeitaria o corpo antes de ninguem ver.
+-- `corte` marca onde o hex foi truncado (corpo grande demais pra guardar).
+CREATE TABLE IF NOT EXISTS capturas_rep (
+  id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+  origem      VARCHAR(45),                    -- IP de origem (Railway ve o proxy, nao o REP)
+  metodo      VARCHAR(10),
+  caminho     VARCHAR(255),
+  cabecalhos  TEXT,                           -- JSON com os headers recebidos
+  corpo_hex   MEDIUMTEXT,                     -- bytes crus em hex
+  corpo_txt   MEDIUMTEXT,                     -- os mesmos bytes em latin1
+  tam_bytes   INT,
+  corte       TINYINT DEFAULT 0,
+  criado_em   DATETIME,
+  KEY idx_data (criado_em)
+);
+
 -- MIGRACOES p/ core ja existente (rode no MySQL da nuvem, ou deixe o app
 -- aplicar na subida - core.js:aplicarMigracoes() faz isso de forma idempotente):
 -- CREATE TABLE contas ( id_conta INT AUTO_INCREMENT PRIMARY KEY, login VARCHAR(64) NOT NULL UNIQUE,
