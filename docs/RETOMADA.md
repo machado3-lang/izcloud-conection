@@ -26,6 +26,9 @@
 > **VPS relay L4 para o REP-C:** [`VPS-RELAY.md`](VPS-RELAY.md) — IP fixo na
 > 443 → TCP Proxy da Railway → `idcloudServer`.
 >
+> **Retomar em 06/11/2026:** [`SESSAO-2026-11-06.md`](SESSAO-2026-11-06.md) —
+> estado atual, VPS contratado, comandos exatos e pendências para fechar o REP-C.
+>
 > **Atualização 04/11/2026:** o AFD completo foi **validado no REP real**
 > (38.543 linhas sem `limit`), a importação de **empresa + funcionários +
 > biometria** da memória do REP foi implementada e o canal foi corrigido

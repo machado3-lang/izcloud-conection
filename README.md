@@ -26,6 +26,7 @@ serviço pago deles** e com controle total dos dados.
 > [`docs/RHID-COMPARATIVO.md`](docs/RHID-COMPARATIVO.md).
 > **Teste passo a passo (iDFace + AFD do iDClass):** [`docs/TESTE.md`](docs/TESTE.md).
 > **VPS relay L4 para o REP-C (IP fixo na 443):** [`docs/VPS-RELAY.md`](docs/VPS-RELAY.md).
+> **Retomar em 06/11/2026:** [`docs/SESSAO-2026-11-06.md`](docs/SESSAO-2026-11-06.md).
 > **Sessão 04/11/2026 (o que foi feito, validado e o que falta):**
 > [`docs/SESSAO-2026-11-04.md`](docs/SESSAO-2026-11-04.md).
 > **Continuação 05/11/2026 (iDFace real + VPS):**

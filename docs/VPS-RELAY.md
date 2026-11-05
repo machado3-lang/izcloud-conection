@@ -1,5 +1,9 @@
 # VPS relay L4 para o REP-C (iDClass)
 
+> **Estado em 05/11/2026:** VPS contratado (Ubuntu 26.4.1 LTS, acesso root/VNC),
+> mas o relay ainda **não** foi configurado (erro de digitação no `apt`). Roteiro
+> de retomada: [`SESSAO-2026-11-06.md`](SESSAO-2026-11-06.md).
+
 > Objetivo: dar ao REP-C um **IP público fixo na 443** para ele conectar no
 > canal iDCloud do iZCloud, sem precisar de IP fixo na Railway.
 >
