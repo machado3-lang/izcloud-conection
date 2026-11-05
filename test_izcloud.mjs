@@ -242,7 +242,16 @@ async function baixarAfdIdclass() {
   if (modo === 'nsr') q.set('nsr', await perguntar('NSR inicial: '));
   if (modo === 'data') q.set('dataInicio', await perguntar('Data inicial (YYYY-MM-DD): '));
 
-  const res = await api(`/api/afd/download?${q}`, { raw: true });
+  let res;
+  try {
+    res = await api(`/api/afd/download?${q}`, { raw: true });
+  } catch (e) {
+    console.log('\nERRO ao baixar do REP:', e.message);
+    console.log('Se o iZCloud esta na nuvem e o REP em 192.168.x.x, a nuvem NAO alcanca o REP.');
+    console.log('Para testar agora: rode o iZCloud local na mesma LAN e use http://localhost:3100.');
+    console.log('Para o acesso remoto do REP-C, o caminho e o VPS/relay L4 na 443.');
+    return;
+  }
   const buf = Buffer.from(await res.arrayBuffer());
   const nome = path.join(process.cwd(), `AFD_idclass_${rep.id_Equipamento}_${modo}.txt`);
   fs.writeFileSync(nome, buf);

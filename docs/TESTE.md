@@ -119,6 +119,32 @@ Antes, cadastre o REP-C. No menu, use a **opção 10**:
 - **Manual:** informe o número de série (o `nSerie` do REP) e os dados de
   conexão. Serve quando o iZCloud está na nuvem e o REP está atrás do NAT.
 
+Cadastro manual do REP-C de homologação (o que já medimos):
+
+```text
+serial: 00014003750029470
+Nome:   REP iDClass 1510
+IP:     192.168.100.132
+Porta:  5432        (porta do web server; o canal iDCloud usa 443 fixa)
+Passcode: admin
+REPType: 1510
+Modo:   nuvem_puxa  (para o teste local; o remoto será rep_empurra/canal)
+```
+
+O mesmo corpo via API:
+
+```json
+{
+  "serial": "00014003750029470",
+  "Nome": "REP iDClass 1510",
+  "IpAddress": "192.168.100.132",
+  "Porta": 5432,
+  "Passcode": "admin",
+  "REPType": "1510",
+  "ModoConexao": "nuvem_puxa"
+}
+```
+
 Depois, a **opção 8** lista os REPs cadastrados:
 
 - **completo**

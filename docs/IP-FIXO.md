@@ -170,6 +170,38 @@ a Opção A (VPS) resolve por uma fração do custo.
 
 **Não fazer:** Spectrum sem Enterprise; Oracle Cloud Free (já falhou uma vez).
 
+### 7.1 TCP Proxy da Railway: o que resolve e o que não resolve
+
+Railway → Public Networking → TCP Proxy:
+
+```text
+zephyr.proxy.rlwy.net:48331  ──►  container:443 (idcloudServer)
+```
+
+O proxy é **L4 (TCP puro)**, então o REP pode falar TLS 1.2 sem SNI/Host. Isso
+resolve o requisito de "sem SNI/Host". Mas **não resolve o REP-C sozinho**:
+
+- o REP-C conecta em **IPv4 literal** (não aceita hostname) e em **porta 443
+  fixa** (o iDCloud do REP-C não tem campo de porta configurável);
+- o TCP Proxy da Railway expõe uma **porta aleatória** (`48331`), não 443; a
+  443 da Railway é a borda HTTP;
+- fixar `66.33.22.227` no REP também não resolve: a porta continua `48331`, e
+  o IP do proxy pode mudar.
+
+Caminho correto (o mesmo da Opção A):
+
+```text
+REP-C (IP literal, 443) ──► VPS IP fixo:443 ──► zephyr.proxy.rlwy.net:48331 ──► idcloudServer:443
+```
+
+O REP aponta para o **IP do VPS na 443**; o VPS só faz `socat`/`nginx stream`
+(L4), sem terminar TLS e sem precisar de SNI/Host. É por isso que o VPS de $3
+continua sendo necessário para o REP-C.
+
+**Para testar agora, sem VPS:** rode o iZCloud **local** na mesma LAN do REP e
+use `nuvem_puxa` (o app local alcança `192.168.100.132:5432`). O caminho remoto
+(`rep_empurra`/canal iDCloud) fica para quando o relay estiver de pé.
+
 ---
 
 ## 8. Como testar sem resolver nada disso
