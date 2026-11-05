@@ -9,6 +9,28 @@ export function detectarTipo(linha) {
   return '1510';
 }
 
+// Extrai o documento (PIS/CPF) de uma linha tipo 3.
+//
+// Medido no iDFace 6.26.4 (05/11/2026): no layout 671 o campo do documento vem
+// com 12 digitos (um zero a esquerda) antes do CRC, e nao 11 como no layout
+// padrao. Ler substring(34,45) cortava o ultimo digito. Aqui pegamos tudo o que
+// existe antes do CRC (4 chars) e removemos o zero de preenchimento.
+export function extrairDocumento(linha) {
+  const l = (linha || '').trim();
+  if (l.length <= 9 || l[9] !== '3') return '';
+  const tipo = detectarTipo(l);
+  let doc;
+  if (tipo === '671') {
+    const resto = l.substring(34);
+    const campo = resto.length >= 4 ? resto.slice(0, -4) : resto;
+    doc = campo.replace(/\D/g, '');
+  } else {
+    doc = l.substring(22, 34).replace(/\D/g, '');
+  }
+  if (doc.length === 12 && doc.startsWith('0')) doc = doc.slice(1);
+  return doc;
+}
+
 // Extrai os campos de uma linha de batida (tipo '3')
 export function parseLinhaBatida(linha) {
   linha = (linha || '').trim();
@@ -24,7 +46,6 @@ export function parseLinhaBatida(linha) {
     if (tipo === '671') {
       const dataHoraStr = linha.substring(10, 29); // YYYY-MM-DDTHH:MM:SS
       dataHora = new Date(dataHoraStr);
-      documento = linha.substring(34, 45); // CPF
     } else {
       const d = linha.substring(10, 12);
       const m = linha.substring(12, 14);
@@ -32,9 +53,8 @@ export function parseLinhaBatida(linha) {
       const hh = linha.substring(18, 20);
       const mm = linha.substring(20, 22);
       dataHora = new Date(y, parseInt(m, 10) - 1, d, hh, mm);
-      documento = linha.substring(22, 34); // PIS (12)
-      if (documento.length === 12 && documento.startsWith('0')) documento = documento.substring(1);
     }
+    documento = extrairDocumento(linha);
   } catch {
     return null;
   }
@@ -61,12 +81,30 @@ export function parseAFD(conteudo) {
   return { registros, porDocumento, total: registros.length };
 }
 
-// Gera AFD (header + registros + trailer) a partir de linhas cruas ja no layout,
-// filtrado por periodo. `linhasCruas` = array de strings (linhas '3').
-export function gerarPorPeriodo({ linhasCruas, serial, dataInicio, dataFim, formato }) {
-  const inicio = dataInicio ? new Date(dataInicio) : null;
-  const fim = dataFim ? new Date(dataFim) : null;
-  const fmt = formato || '1510';
+// Gera AFD 1510 (header + registros + trailer) a partir de linhas cruas ja no
+// layout, filtrado por periodo. `linhasCruas` = array de strings (linhas '3').
+//
+// Para 671 NAO geramos: o header/trailer do 671 tem CRC do fabricante e o
+// caminho correto e' baixar o arquivo bruto do REP (GET /api/afd/download).
+// Regerar sem o CRC produziria um arquivo fiscal invalido em silencio.
+export function gerarPorPeriodo({ linhasCruas, serial, dataInicio, dataFim, formato, empregador }) {
+  const fmt = formato === '671' ? '671' : '1510';
+  if (fmt === '671') {
+    throw new Error('AFD 671 deve ser baixado bruto do REP (GET /api/afd/download): ' +
+      'o header/trailer tem CRC do fabricante e nao pode ser regerado aqui.');
+  }
+
+  const dataSoDia = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+  const inicio = dataInicio
+    ? (dataSoDia(dataInicio)
+      ? new Date(`${dataInicio}T00:00:00`)
+      : new Date(dataInicio))
+    : null;
+  const fim = dataFim
+    ? (dataSoDia(dataFim)
+      ? new Date(`${dataFim}T23:59:59.999`)
+      : new Date(dataFim))
+    : null;
 
   const filtradas = linhasCruas.filter((l) => {
     const r = parseLinhaBatida(l);
@@ -77,27 +115,44 @@ export function gerarPorPeriodo({ linhasCruas, serial, dataInicio, dataFim, form
   });
 
   const now = new Date();
-  const dataStr = now.toISOString().slice(0, 10).replace(/-/g, '');
-  const horaStr = now.toTimeString().slice(0, 8).replace(/:/g, '');
-  const numSerie = (serial || '').padEnd(17, ' ').slice(0, 17);
+  const dois = (n) => String(n).padStart(2, '0');
+  const ddmmaaaa = (v) => {
+    if (v instanceof Date) {
+      if (Number.isNaN(v.getTime())) return null;
+      return `${dois(v.getDate())}${dois(v.getMonth() + 1)}${v.getFullYear()}`;
+    }
+    const s = String(v || '');
+    const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (iso) return `${iso[3]}${iso[2]}${iso[1]}`;
+    if (/^(19|20)\d{6}$/.test(s)) return `${s.slice(6, 8)}${s.slice(4, 6)}${s.slice(0, 4)}`;
+    if (/^\d{8}$/.test(s)) return s;
+    return null;
+  };
 
-  const lines = [];
-  if (fmt === '671') {
-    lines.push(`0000000011000000000${dataStr}${horaStr}${numSerie}${' '.repeat(228)}`);
-  } else {
-    lines.push(`0000000011${dataStr.slice(0, 2)}${dataStr.slice(2, 4)}${dataStr.slice(4, 8)}${horaStr.slice(0, 4)}${numSerie}${' '.repeat(182)}`);
-  }
+  const emp = empregador || {};
+  const doc = String(emp.CNPJ_CPF || emp.cnpj || '').replace(/\D/g, '');
+  const tpIdt = doc.length === 11 ? '2' : '1';
+  const idt = (doc || '0').padStart(14, '0').slice(-14);
+  const cei = String(emp.CEI || emp.cei || '').replace(/\D/g, '').padStart(12, '0').slice(-12);
+  const razao = String(emp.RazaoSocial || emp.razao_social || '').padEnd(150, ' ').slice(0, 150);
+  const numSerie = String(serial || '').padStart(17, '0').slice(-17);
 
-  let nsr = 1;
-  for (const l of filtradas) {
-    // Preserva a linha crua original (ja no layout do REP) e renumera o NSR no header local
-    lines.push(l.trim());
-    nsr++;
-  }
+  const primeira = parseLinhaBatida(filtradas[0]);
+  const ultima = parseLinhaBatida(filtradas[filtradas.length - 1]);
+  const ini = ddmmaaaa(dataInicio) || ddmmaaaa(primeira?.dataHora) || ddmmaaaa(now);
+  const fimArq = ddmmaaaa(dataFim) || ddmmaaaa(ultima?.dataHora) || ddmmaaaa(now);
+  const ger = ddmmaaaa(now);
+  const hora = `${dois(now.getHours())}${dois(now.getMinutes())}`;
 
+  // Layout 1510 (Anexo I): 9+1+1+14+12+150+17+8+8+8+4 = 232 chars.
+  const lines = [
+    `0000000001${tpIdt}${idt}${cei}${razao}${numSerie}${ini}${fimArq}${ger}${hora}`,
+  ];
+  for (const l of filtradas) lines.push(l.trim());
+
+  // Trailer 1510: 999999999 + tipo2 + tipo3 + tipo4 + tipo5 + 9 = 46 chars.
   const total = String(filtradas.length).padStart(9, '0');
-  if (fmt === '671') lines.push(`${total}9${' '.repeat(250)}`);
-  else lines.push(`${total}9${' '.repeat(42)}`);
+  lines.push(`999999999000000000${total}0000000000000000009`);
 
   return { texto: lines.join('\r\n'), total: filtradas.length };
 }

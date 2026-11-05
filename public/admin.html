@@ -224,7 +224,11 @@ select.form-input option { background: var(--bg-secondary); }
         <div><label class="fld">Nome fantasia</label><input id="e_nome" class="form-input" /></div>
       </div>
       <div class="row">
-        <div><label class="fld">CNPJ</label><input id="e_cnpj" class="form-input" placeholder="12345678000100" /></div>
+        <div style="flex:0 0 110px;"><label class="fld">Tipo doc.</label><select id="e_tipo_doc" class="form-input"><option value="CNPJ">CNPJ</option><option value="CPF">CPF</option></select></div>
+        <div><label class="fld">CNPJ/CPF</label><input id="e_cnpj" class="form-input" placeholder="12345678000100" /></div>
+        <div><label class="fld">CEI</label><input id="e_cei" class="form-input" placeholder="opcional" /></div>
+      </div>
+      <div class="row">
         <div style="flex:2;"><label class="fld">Endereco</label><input id="e_end" class="form-input" /></div>
       </div>
       <div class="row">
@@ -512,7 +516,7 @@ function renderEmpresas() {
   const box = $('tab_empresas');
   if (!DADOS.empresas.length) { box.innerHTML = '<p class="muted" style="margin-top:1rem;">Nenhuma empresa cadastrada.</p>'; return; }
   box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr>' +
-    '<th>ID</th><th>Razao social</th><th>CNPJ</th><th>Schema</th><th>Login (API)</th><th>Conta</th><th>Status</th><th>Acoes</th>' +
+    '<th>ID</th><th>Razao social</th><th>CNPJ/CPF</th><th>Schema</th><th>Login (API)</th><th>Conta</th><th>Status</th><th>Acoes</th>' +
     '</tr></thead><tbody>' +
     DADOS.empresas.map((e) => `<tr>
       <td>${e.id_cliente}</td>
@@ -660,7 +664,9 @@ function novaEmpresa(idConta) {
     <label class="fld">Razao social</label><input id="ne_razao" class="form-input" placeholder="Empresa 2 LTDA" />
     <div class="row">
       <div><label class="fld">Nome fantasia</label><input id="ne_nome" class="form-input" /></div>
-      <div><label class="fld">CNPJ</label><input id="ne_cnpj" class="form-input" /></div>
+      <div style="flex:0 0 110px;"><label class="fld">Tipo doc.</label><select id="ne_tipo_doc" class="form-input"><option value="CNPJ">CNPJ</option><option value="CPF">CPF</option></select></div>
+      <div><label class="fld">CNPJ/CPF</label><input id="ne_cnpj" class="form-input" /></div>
+      <div><label class="fld">CEI</label><input id="ne_cei" class="form-input" placeholder="opcional" /></div>
     </div>
     <label class="fld">Endereco</label><input id="ne_end" class="form-input" />
     <div class="row">
@@ -680,7 +686,8 @@ function novaEmpresa(idConta) {
   `, async () => {
     const r = await api('/api/admin/contas/' + idConta + '/empresas', { method: 'POST', body: JSON.stringify({
       login: $('ne_login').value, senha: $('ne_senha').value,
-      razao_social: $('ne_razao').value, nome_empresa: $('ne_nome').value, cnpj: $('ne_cnpj').value,
+      razao_social: $('ne_razao').value, nome_empresa: $('ne_nome').value,
+      tipo_documento: $('ne_tipo_doc').value, cnpj: $('ne_cnpj').value, cei: $('ne_cei').value,
       endereco: $('ne_end').value, responsavel_nome: $('ne_resp').value, responsavel_cpf: $('ne_resp_cpf').value,
     }) });
     toast('Empresa criada: ' + r.schema, 'success');
@@ -694,7 +701,9 @@ function editarEmpresa(id) {
     <label class="fld">Razao social</label><input id="ee_razao" class="form-input" value="${esc(e.razao_social || '')}" />
     <div class="row">
       <div><label class="fld">Nome fantasia</label><input id="ee_nome" class="form-input" value="${esc(e.nome_empresa || '')}" /></div>
-      <div><label class="fld">CNPJ</label><input id="ee_cnpj" class="form-input" value="${esc(e.cnpj || '')}" /></div>
+      <div style="flex:0 0 110px;"><label class="fld">Tipo doc.</label><select id="ee_tipo_doc" class="form-input"><option value="CNPJ"${(e.tipo_documento || 'CNPJ') === 'CNPJ' ? ' selected' : ''}>CNPJ</option><option value="CPF"${e.tipo_documento === 'CPF' ? ' selected' : ''}>CPF</option></select></div>
+      <div><label class="fld">CNPJ/CPF</label><input id="ee_cnpj" class="form-input" value="${esc(e.cnpj || '')}" /></div>
+      <div><label class="fld">CEI</label><input id="ee_cei" class="form-input" value="${esc(e.cei || '')}" placeholder="opcional" /></div>
     </div>
     <label class="fld">Endereco</label><input id="ee_end" class="form-input" value="${esc(e.endereco || '')}" />
     <div class="row">
@@ -704,7 +713,8 @@ function editarEmpresa(id) {
     <p class="muted" style="font-size:.78rem;margin-top:.5rem;">Conta dona: <b>${esc(e.login_conta || '(orfa)')}</b></p>
   `, async () => {
     await api('/api/admin/empresas/' + id, { method: 'PUT', body: JSON.stringify({
-      razao_social: $('ee_razao').value, nome_empresa: $('ee_nome').value, cnpj: $('ee_cnpj').value,
+      razao_social: $('ee_razao').value, nome_empresa: $('ee_nome').value,
+      tipo_documento: $('ee_tipo_doc').value, cnpj: $('ee_cnpj').value, cei: $('ee_cei').value,
       endereco: $('ee_end').value, responsavel_nome: $('ee_resp').value, responsavel_cpf: $('ee_resp_cpf').value,
     }) });
     toast('Empresa atualizada.', 'success');
@@ -716,8 +726,9 @@ $('btn_nova').onclick = () => {
   $('mConta').classList.remove('hidden');
   $('m_conta_msg').className = '';
   $('m_conta_msg').textContent = '';
-  ['c_login', 'c_nome', 'c_senha', 'e_razao', 'e_nome', 'e_cnpj', 'e_end', 'e_resp', 'e_resp_cpf', 'e_login', 'e_senha']
+  ['c_login', 'c_nome', 'c_senha', 'e_razao', 'e_nome', 'e_tipo_doc', 'e_cnpj', 'e_cei', 'e_end', 'e_resp', 'e_resp_cpf', 'e_login', 'e_senha']
     .forEach((k) => { if ($(k)) $(k).value = ''; });
+  if ($('e_tipo_doc')) $('e_tipo_doc').value = 'CNPJ';
 };
 $('c_cancel').onclick = () => $('mConta').classList.add('hidden');
 $('c_com_empresa').onchange = () => {
@@ -732,7 +743,8 @@ $('c_save').onclick = async () => {
       payload.empresas = [{
         login: $('e_login').value.trim(), senha: $('e_senha').value,
         razao_social: $('e_razao').value.trim(), nome_empresa: $('e_nome').value.trim(),
-        cnpj: $('e_cnpj').value.trim(), endereco: $('e_end').value.trim(),
+        tipo_documento: $('e_tipo_doc').value, cnpj: $('e_cnpj').value.trim(), cei: $('e_cei').value.trim(),
+        endereco: $('e_end').value.trim(),
         responsavel_nome: $('e_resp').value.trim(), responsavel_cpf: $('e_resp_cpf').value.trim(),
       }];
     }

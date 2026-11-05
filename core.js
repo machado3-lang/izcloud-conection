@@ -53,7 +53,7 @@ export function getTenantPool(schemaName) {
 // insiste ate resolver.
 const COLUNAS_ESPERADAS = {
   contas: ['papel', 'ultimo_login', 'criado_por'],
-  clientes: ['id_conta', 'razao_social', 'endereco', 'responsavel_nome', 'responsavel_cpf'],
+  clientes: ['id_conta', 'razao_social', 'tipo_documento', 'cei', 'endereco', 'responsavel_nome', 'responsavel_cpf'],
 };
 
 // Tabelas que o app exige. Se `usuarios` faltar, o SELECT do login estoura com
@@ -213,6 +213,8 @@ export async function aplicarMigracoes() {
     await addColumnSeFaltar(conn, 'contas', 'criado_por', 'INT');
     await addColumnSeFaltar(conn, 'clientes', 'id_conta', 'INT');
     await addColumnSeFaltar(conn, 'clientes', 'razao_social', 'VARCHAR(160)');
+    await addColumnSeFaltar(conn, 'clientes', 'tipo_documento', "ENUM('CNPJ','CPF') DEFAULT 'CNPJ'");
+    await addColumnSeFaltar(conn, 'clientes', 'cei', 'VARCHAR(20)');
     await addColumnSeFaltar(conn, 'clientes', 'endereco', 'VARCHAR(200)');
     await addColumnSeFaltar(conn, 'clientes', 'responsavel_nome', 'VARCHAR(120)');
     await addColumnSeFaltar(conn, 'clientes', 'responsavel_cpf', 'VARCHAR(20)');
@@ -339,7 +341,7 @@ const TENANT_EXTRAS = {
   // REP ja sincronizou, ate qual NSR, e qual foi o ultimo erro.
   rep_coletas: `CREATE TABLE IF NOT EXISTS rep_coletas (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    id_reps INT NOT NULL,
+    id_reps BIGINT NOT NULL,
     serial VARCHAR(32),
     ultimo_nsr INT,
     batidas INT DEFAULT 0,
@@ -351,7 +353,120 @@ const TENANT_EXTRAS = {
     atualizado_em DATETIME,
     UNIQUE KEY uq_rep (id_reps),
     KEY idx_atualizado (atualizado_em))`,
+  idface_dispositivos: `CREATE TABLE IF NOT EXISTS idface_dispositivos (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    token CHAR(48) NOT NULL,
+    device_id BIGINT,
+    serial VARCHAR(32),
+    idcloud_code VARCHAR(32),
+    nome VARCHAR(100),
+    id_Equipamento BIGINT,
+    portaria CHAR(4) DEFAULT '671',
+    ativo BIT DEFAULT 1,
+    ultimo_contato DATETIME,
+    ultimo_uuid VARCHAR(64),
+    criado_em DATETIME,
+    UNIQUE KEY uq_token (token),
+    KEY idx_device (device_id),
+    KEY idx_equip (id_Equipamento))`,
+  idface_comandos: `CREATE TABLE IF NOT EXISTS idface_comandos (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id_dispositivo BIGINT NOT NULL,
+    verb VARCHAR(10) DEFAULT 'POST',
+    endpoint VARCHAR(100) NOT NULL,
+    body TEXT,
+    query_string VARCHAR(100),
+    content_type VARCHAR(60) DEFAULT 'application/json',
+    status ENUM('pendente','entregue','concluido','erro') DEFAULT 'pendente',
+    criado_em DATETIME,
+    entregue_em DATETIME,
+    concluido_em DATETIME,
+    erro VARCHAR(255),
+    KEY idx_fila (id_dispositivo, status, id))`,
+  idface_resultados: `CREATE TABLE IF NOT EXISTS idface_resultados (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id_dispositivo BIGINT,
+    endpoint VARCHAR(100),
+    uuid VARCHAR(64),
+    response LONGTEXT,
+    erro VARCHAR(255),
+    criado_em DATETIME,
+    KEY idx_disp (id_dispositivo, id))`,
+  idface_marcacoes: `CREATE TABLE IF NOT EXISTS idface_marcacoes (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id_dispositivo BIGINT NOT NULL,
+    device_user_id BIGINT,
+    documento VARCHAR(20),
+    nsr INT,
+    data_hora DATETIME,
+    data_hora_utc DATETIME,
+    fuso VARCHAR(8),
+    tipo_registro CHAR(1),
+    origem VARCHAR(20),
+    linha TEXT,
+    sha256 CHAR(64),
+    criado_em DATETIME,
+    UNIQUE KEY uq_marc (id_dispositivo, origem, nsr, data_hora),
+    KEY idx_data (data_hora),
+    KEY idx_doc (documento))`,
+  idface_usuarios: `CREATE TABLE IF NOT EXISTS idface_usuarios (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id_dispositivo BIGINT NOT NULL,
+    device_user_id BIGINT NOT NULL,
+    registration VARCHAR(32),
+    nome VARCHAR(120),
+    cpf VARCHAR(20),
+    atualizado_em DATETIME,
+    UNIQUE KEY uq_user (id_dispositivo, device_user_id))`,
+  idface_vinculos: `CREATE TABLE IF NOT EXISTS idface_vinculos (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id_dispositivo BIGINT NOT NULL,
+    device_user_id BIGINT NOT NULL,
+    id_pessoa INT,
+    documento VARCHAR(20),
+    valid_from DATETIME NOT NULL,
+    valid_to DATETIME,
+    origem VARCHAR(32),
+    UNIQUE KEY uq_vigente (id_dispositivo, device_user_id, valid_from),
+    KEY idx_pessoa (id_pessoa))`,
+  afd_arquivos: `CREATE TABLE IF NOT EXISTS afd_arquivos (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    origem VARCHAR(20) NOT NULL,
+    formato VARCHAR(8),
+    serial VARCHAR(32),
+    id_Equipamento BIGINT,
+    id_dispositivo BIGINT,
+    nome VARCHAR(200),
+    caminho VARCHAR(500),
+    sha256 CHAR(64),
+    tamanho INT,
+    nsr_inicial INT,
+    nsr_final INT,
+    data_inicio DATETIME,
+    data_fim DATETIME,
+    criado_em DATETIME,
+    KEY idx_equip (id_Equipamento, criado_em),
+    KEY idx_disp (id_dispositivo, criado_em))`,
 };
+
+// Roda as migracoes de TODOS os tenants ativos. Sem isso, uma empresa criada
+// antes de `rep_coletas`/`Serial`/`templates` so seria migrada se alguem
+// chamasse a rota /api/empresas/migrar-contrato — e o canal falharia antes.
+export async function migrarTenantsExistentes() {
+  const core = getCorePool();
+  const [clientes] = await core.query('SELECT schema_name FROM clientes WHERE ativo = 1');
+  const falhas = [];
+  for (const c of clientes) {
+    try {
+      await aplicarMigracoesTenant(c.schema_name);
+    } catch (e) {
+      falhas.push(`${c.schema_name}: ${e.message}`);
+      console.error(`[migracao-tenant] ${c.schema_name} falhou:`, e.message);
+    }
+  }
+  if (falhas.length) console.error('[migracao-tenant] tenants com falha:', falhas.join(' | '));
+  return falhas;
+}
 
 export async function aplicarMigracoesTenant(schema) {
   const pool = getTenantPool(schema);
@@ -384,6 +499,19 @@ export async function aplicarMigracoesTenant(schema) {
       await pool.query(`ALTER TABLE \`${tabela}\` ADD COLUMN \`${coluna}\` ${tipo}`);
       aplicados.push(`${tabela}.${coluna}`);
     }
+  }
+
+  // rep_coletas.id_reps guarda o id_Equipamento, que e' o serial do aparelho
+  // (17 digitos). INT nao comporta: tenants criados antes disso precisam do
+  // alargamento, senao a primeira coleta estoura no INSERT.
+  const [rc] = await pool.query(
+    'SELECT DATA_TYPE FROM information_schema.COLUMNS ' +
+    'WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+    [schema, 'rep_coletas', 'id_reps']
+  );
+  if (rc.length && rc[0].DATA_TYPE === 'int') {
+    await pool.query('ALTER TABLE `rep_coletas` MODIFY `id_reps` BIGINT NOT NULL');
+    aplicados.push('rep_coletas.id_reps -> BIGINT');
   }
 
   // id_Equipamento precisa ser BIGINT em TODA tabela que o referencia: um serial
@@ -466,7 +594,7 @@ export async function registrarColetaRep(schema, { id_reps, ultimoNsr, batidas, 
   }
   await pool.query(
     `INSERT INTO rep_coletas (id_reps, ultimo_nsr, batidas, total_coletado, ultima_coleta, atualizado_em)
-     VALUES (?,?,?,?,?,NOW(),NOW())
+     VALUES (?,?,?,?,NOW(),NOW())
      ON DUPLICATE KEY UPDATE ultimo_nsr=VALUES(ultimo_nsr), batidas=VALUES(batidas),
        total_coletado=total_coletado+VALUES(total_coletado),
        ultima_coleta=NOW(), ultimo_erro=NULL, atualizado_em=NOW()`,
@@ -487,6 +615,54 @@ export async function listarColetasRep(schema, limite = 100) {
             conectado_em, ultima_coleta, ultimo_erro
        FROM rep_coletas ORDER BY atualizado_em DESC LIMIT ?`, [Math.min(Number(limite) || 100, 500)]);
   return rows;
+}
+
+// Procura um REP cadastrado pelo serial em qualquer empresa ativa. E' o que
+// permite o canal aceitar o aparelho sem uma reserva manual — sem isso a coleta
+// "automatica" nunca acontece, porque ninguem esta na tela reservando vaga.
+//
+// Cache curto: a varredura percorre os tenants e nao pode rodar a cada conexao
+// do REP (a cada ~30s). 60s de atraso para um REP recem-cadastrado e' aceitavel.
+const _cacheSerial = new Map();
+export async function buscarRepPorSerial(serial) {
+  const alvo = String(serial || '').trim();
+  if (!alvo) return null;
+  const cache = _cacheSerial.get(alvo);
+  if (cache && cache.ate > Date.now()) return cache.valor;
+
+  const core = getCorePool();
+  const [clientes] = await core.query('SELECT schema_name FROM clientes WHERE ativo = 1');
+  let achado = null;
+  for (const c of clientes) {
+    try {
+      const [rows] = await getTenantPool(c.schema_name).query(
+        `SELECT id_Equipamento,
+                COALESCE(Serial, CAST(id_Equipamento AS CHAR)) AS Serial,
+                Passcode
+           FROM equipamentos
+          WHERE Serial = ? OR CAST(id_Equipamento AS CHAR) = ?
+          LIMIT 1`,
+        [alvo, alvo]
+      );
+      if (rows.length) {
+        achado = {
+          schema: c.schema_name,
+          id_reps: rows[0].id_Equipamento,
+          serial: rows[0].Serial || alvo,
+          passcode: rows[0].Passcode || null,
+        };
+        break;
+      }
+    } catch (e) {
+      // Tenant antigo sem a coluna Serial, banco fora etc. Nao pode derrubar a
+      // varredura dos outros.
+      console.error(`[canal] falha ao procurar REP ${alvo} em ${c.schema_name}:`, e.message);
+    }
+  }
+
+  if (_cacheSerial.size > 1000) _cacheSerial.clear();
+  _cacheSerial.set(alvo, { valor: achado, ate: Date.now() + 60000 });
+  return achado;
 }
 
 // ---- CRUD de clientes (tenants) ----
@@ -558,26 +734,31 @@ export async function existeAdmin() {
 export async function listarEmpresas(id_conta) {
   const core = getCorePool();
   const [rows] = await core.query(
-    'SELECT id_cliente, schema_name, razao_social, nome_empresa, cnpj, endereco, responsavel_nome, responsavel_cpf FROM clientes WHERE id_conta = ? AND ativo = 1 ORDER BY id_cliente',
+    'SELECT id_cliente, schema_name, razao_social, nome_empresa, tipo_documento, cnpj, cei, ' +
+    'endereco, responsavel_nome, responsavel_cpf FROM clientes WHERE id_conta = ? AND ativo = 1 ORDER BY id_cliente',
     [id_conta]
   );
   return rows.map(r => ({
     id_cliente: r.id_cliente, schema: r.schema_name,
     razao_social: r.razao_social, nome_empresa: r.nome_empresa,
-    cnpj: r.cnpj, endereco: r.endereco, responsavel_nome: r.responsavel_nome, responsavel_cpf: r.responsavel_cpf,
+    tipo_documento: r.tipo_documento || 'CNPJ', cnpj: r.cnpj, cei: r.cei,
+    endereco: r.endereco, responsavel_nome: r.responsavel_nome, responsavel_cpf: r.responsavel_cpf,
   }));
 }
 
 // ---- Empresa (tenant) vinculada a uma conta ----
-export async function criarEmpresa({ id_conta, login, senha, nome_empresa, razao_social, cnpj, endereco, responsavel_nome, responsavel_cpf }) {
+export async function criarEmpresa({ id_conta, login, senha, nome_empresa, razao_social, tipo_documento = 'CNPJ', cnpj, cei, endereco, responsavel_nome, responsavel_cpf }) {
   const core = getCorePool();
   if (!login) throw new Error('Login da empresa e obrigatorio (acesso via API)');
   const [ex] = await core.query('SELECT id_cliente FROM clientes WHERE login = ?', [login]);
   if (ex.length) throw new Error('Login da empresa ja existe');
+  const tipo = tipo_documento === 'CPF' ? 'CPF' : 'CNPJ';
   const [r] = await core.query(
-    `INSERT INTO clientes (id_conta, login, senha_hash, schema_name, razao_social, nome_empresa, cnpj, endereco, responsavel_nome, responsavel_cpf, ativo, criado_em)
-     VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, 1, NOW())`,
-    [id_conta, login, hashPassword(senha), razao_social || null, nome_empresa || null, cnpj || null, endereco || null, responsavel_nome || null, responsavel_cpf || null]
+    `INSERT INTO clientes (id_conta, login, senha_hash, schema_name, razao_social, nome_empresa,
+       tipo_documento, cnpj, cei, endereco, responsavel_nome, responsavel_cpf, ativo, criado_em)
+     VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW())`,
+    [id_conta, login, hashPassword(senha), razao_social || null, nome_empresa || null,
+      tipo, cnpj || null, cei || null, endereco || null, responsavel_nome || null, responsavel_cpf || null]
   );
   const id = r.insertId;
   const schema = 'tenant_' + String(id).padStart(4, '0');
@@ -598,7 +779,7 @@ export async function atualizarEmpresa(id_conta, id_cliente, campos) {
   const [own] = await core.query('SELECT id_cliente FROM clientes WHERE id_cliente = ? AND id_conta = ?', [id_cliente, id_conta]);
   if (!own.length) throw new Error('Empresa nao pertence a esta conta');
   const cols = [], vals = [];
-  for (const k of ['razao_social', 'nome_empresa', 'cnpj', 'endereco', 'responsavel_nome', 'responsavel_cpf']) {
+  for (const k of ['razao_social', 'nome_empresa', 'tipo_documento', 'cnpj', 'cei', 'endereco', 'responsavel_nome', 'responsavel_cpf']) {
     if (campos[k] !== undefined) { cols.push(`${k} = ?`); vals.push(campos[k]); }
   }
   if (!cols.length) return { ok: true };
@@ -607,15 +788,18 @@ export async function atualizarEmpresa(id_conta, id_cliente, campos) {
   return { ok: true };
 }
 
-export async function criarCliente({ login, senha, nome_empresa, cnpj, id_conta = null, razao_social = null, endereco = null, responsavel_nome = null, responsavel_cpf = null }) {
+export async function criarCliente({ login, senha, nome_empresa, tipo_documento = 'CNPJ', cnpj, cei = null, id_conta = null, razao_social = null, endereco = null, responsavel_nome = null, responsavel_cpf = null }) {
   const core = getCorePool();
   const [ex] = await core.query('SELECT id_cliente FROM clientes WHERE login = ?', [login]);
   if (ex.length) throw new Error('Login ja existe');
 
+  const tipo = tipo_documento === 'CPF' ? 'CPF' : 'CNPJ';
   const [r] = await core.query(
-    `INSERT INTO clientes (id_conta, login, senha_hash, schema_name, razao_social, nome_empresa, cnpj, endereco, responsavel_nome, responsavel_cpf, ativo, criado_em)
-     VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, 1, NOW())`,
-    [id_conta, login, hashPassword(senha), razao_social, nome_empresa || null, cnpj || null, endereco, responsavel_nome, responsavel_cpf]
+    `INSERT INTO clientes (id_conta, login, senha_hash, schema_name, razao_social, nome_empresa,
+       tipo_documento, cnpj, cei, endereco, responsavel_nome, responsavel_cpf, ativo, criado_em)
+     VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW())`,
+    [id_conta, login, hashPassword(senha), razao_social, nome_empresa || null,
+      tipo, cnpj || null, cei || null, endereco, responsavel_nome, responsavel_cpf]
   );
   const id = r.insertId;
   const schema = 'tenant_' + String(id).padStart(4, '0');
@@ -826,7 +1010,8 @@ export async function listarTodasEmpresas() {
   const core = getCorePool();
   const [rows] = await core.query(
     `SELECT e.id_cliente, e.id_conta, e.login AS login_api, e.schema_name, e.razao_social, e.nome_empresa,
-            e.cnpj, e.endereco, e.responsavel_nome, e.responsavel_cpf, e.ativo, e.criado_em,
+            e.tipo_documento, e.cnpj, e.cei, e.endereco, e.responsavel_nome, e.responsavel_cpf,
+            e.ativo, e.criado_em,
             c.login AS login_conta, c.nome AS nome_conta
        FROM clientes e LEFT JOIN contas c ON c.id_conta = e.id_conta
       ORDER BY e.id_cliente`
@@ -838,7 +1023,9 @@ export async function listarTodasEmpresas() {
     schema: r.schema_name,
     razao_social: r.razao_social,
     nome_empresa: r.nome_empresa,
+    tipo_documento: r.tipo_documento || 'CNPJ',
     cnpj: r.cnpj,
+    cei: r.cei,
     endereco: r.endereco,
     responsavel_nome: r.responsavel_nome,
     responsavel_cpf: r.responsavel_cpf,
@@ -856,7 +1043,7 @@ export async function atualizarEmpresaAdmin(id_cliente, campos) {
   const [rows] = await core.query('SELECT id_cliente FROM clientes WHERE id_cliente = ?', [id_cliente]);
   if (!rows.length) throw new Error('Empresa nao encontrada');
   const cols = [], vals = [];
-  for (const k of ['razao_social', 'nome_empresa', 'cnpj', 'endereco', 'responsavel_nome', 'responsavel_cpf']) {
+  for (const k of ['razao_social', 'nome_empresa', 'tipo_documento', 'cnpj', 'cei', 'endereco', 'responsavel_nome', 'responsavel_cpf']) {
     if (campos[k] !== undefined) { cols.push(`${k} = ?`); vals.push(campos[k]); }
   }
   if (campos.ativo !== undefined) { cols.push('ativo = ?'); vals.push(campos.ativo ? 1 : 0); }

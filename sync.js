@@ -8,8 +8,41 @@ export async function sincronizarAfd({ ip, porta, usuario, senha, idEquipamento,
   const [st] = await client.pool.query('SELECT last_nsr FROM sync_status WHERE id_Equipamento = ?', [idEquipamento]);
   const lastNsr = st?.length ? (st[0].last_nsr || 0) : 0;
 
+  const r = await coletarAfdRep({
+    ip, porta, usuario, senha, idEquipamento, mode, client,
+    initialNsr: lastNsr + 1,
+    desdeNsr: lastNsr,
+    atualizarCursor: true,
+  });
+  return { inseridos: r.inseridos, lastNsr: r.maxNsr };
+}
+
+// Coleta o AFD do REP com filtro explicito:
+//   completo  -> arquivo inteiro (sem initial_nsr/initial_date)
+//   initialNsr -> a partir do NSR informado (inclusive)
+//   initialDate -> a partir da data { day, month, year }
+//
+// `atualizarCursor` so deve ser true na coleta incremental. Um download manual
+// por data/NSR nao pode mover o cursor do poller para tras nem para frente.
+export async function coletarAfdRep({
+  ip, porta, usuario, senha, idEquipamento, mode, client,
+  completo = false, initialNsr = null, initialDate = null,
+  desdeNsr = 0, atualizarCursor = false,
+} = {}) {
   const sess = (await proxyREP(ip, porta, 'login', { login: usuario, password: senha })).session;
-  const body = { session: sess, initial_nsr: lastNsr + 1 };
+  const body = { session: sess };
+  if (!completo) {
+    if (initialNsr != null && Number.isFinite(Number(initialNsr))) {
+      body.initial_nsr = Number(initialNsr);
+    }
+    if (initialDate && Number(initialDate.day) && Number(initialDate.month) && Number(initialDate.year)) {
+      body.initial_date = {
+        day: Number(initialDate.day),
+        month: Number(initialDate.month),
+        year: Number(initialDate.year),
+      };
+    }
+  }
 
   let txt;
   try {
@@ -24,44 +57,30 @@ export async function sincronizarAfd({ ip, porta, usuario, senha, idEquipamento,
   }
 
   const linhas = String(txt || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  let maxNsr = lastNsr;
-  let inseridos = 0;
-
+  let maxNsr = Number(desdeNsr) || 0;
   for (const l of linhas) {
-    if (l[9] !== '3') continue;
+    if (l[9] !== '3' && l[9] !== '7') continue;
     const nsr = parseInt(l.substring(0, 9), 10);
-    if (!(nsr > lastNsr)) continue; // incremental: so o que veio depois
-
-    const is671 = l.length > 14 && l[14] === '-';
-    let doc = '', data = null;
-    try {
-      if (is671) { doc = l.substring(34, 45); data = new Date(l.substring(10, 29)); }
-      else {
-        const d = l.substring(10, 12), m = l.substring(12, 14), y = l.substring(14, 18);
-        const hh = l.substring(18, 20), mm = l.substring(20, 22);
-        doc = l.substring(22, 34);
-        data = new Date(y, parseInt(m, 10) - 1, d, hh, mm);
-      }
-    } catch {}
-
-    await client.pool.query(
-      `INSERT INTO afd (id_Equipamento, PIS, NSR, Data, Tipo, Dado, CRC)
-       VALUES (?, ?, ?, ?, 3, ?, NULL)
-       ON DUPLICATE KEY UPDATE Dado = VALUES(Dado)`,
-      [idEquipamento, doc || null, nsr, data, l]
-    );
-    inseridos++;
-    if (nsr > maxNsr) maxNsr = nsr;
+    if (Number.isFinite(nsr) && nsr > maxNsr) maxNsr = nsr;
   }
 
-  await client.pool.query(
-    `INSERT INTO sync_status (id_Equipamento, last_nsr, last_sync, ativo)
-     VALUES (?, ?, NOW(), 1)
-     ON DUPLICATE KEY UPDATE last_nsr = ?, last_sync = NOW()`,
-    [idEquipamento, maxNsr, maxNsr]
-  );
+  // Gravacao em lote (500 por INSERT) e filtro client-side: este firmware
+  // ignora `initial_nsr` e devolve o arquivo inteiro (~38 mil linhas). Gravar
+  // linha a linha fazia a sincronizacao completa demorar minutos.
+  const inseridos = await client.salvarAfd(idEquipamento, linhas, {
+    desdeNsr: Number(desdeNsr) || 0,
+  });
 
-  return { inseridos, lastNsr: maxNsr };
+  if (atualizarCursor) {
+    await client.pool.query(
+      `INSERT INTO sync_status (id_Equipamento, last_nsr, last_sync, ativo)
+       VALUES (?, ?, NOW(), 1)
+       ON DUPLICATE KEY UPDATE last_nsr = ?, last_sync = NOW()`,
+      [idEquipamento, maxNsr, maxNsr]
+    );
+  }
+
+  return { texto: String(txt || ''), linhas, inseridos, maxNsr };
 }
 
 // Poller silencioso: itera TODOS os tenants ativos e sincroniza seus REPs.

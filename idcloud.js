@@ -3,6 +3,7 @@
 // (se configuravel) ou nosso servidor popula aqui via FCGI IP-direto.
 // Credenciais vindas do NOSSO servidor (env IDCLOUD_*).
 import mysql from 'mysql2/promise';
+import { extrairDocumento } from './afd.js';
 
 export class IdCloudClient {
   // Em multi-tenant, recebe o pool ja apontando para o schema do cliente.
@@ -54,50 +55,90 @@ export class IdCloudClient {
 
   // Persiste AFD baixado (de FCGI ou do proprio REP) no banco da nuvem.
   // `linhas` = array de strings (linhas cruas '3' ou header/trailer).
-  async salvarAfd(idEquipamento, linhas) {
+  //
+  // `desdeNsr` evita reprocessar o arquivo inteiro a cada coleta: quando o
+  // canal passa a ler o AFD completo (dezenas de milhares de linhas), gravar
+  // linha a linha estourava o tempo da conexao. O lote de 500 resolve os dois:
+  // menos round-trips e menos memoria.
+  async salvarAfd(idEquipamento, linhas, { desdeNsr = 0 } = {}) {
+    let valores = [];
+    let params = [];
+    let gravadas = 0;
+    const enviar = async () => {
+      if (!valores.length) return;
+      await this.pool.query(
+        'INSERT INTO afd (id_Equipamento, PIS, NSR, Data, Tipo, Dado, CRC) VALUES ' +
+        valores.join(', ') + ' ON DUPLICATE KEY UPDATE Dado = VALUES(Dado)',
+        params
+      );
+      valores = [];
+      params = [];
+    };
+
     for (const l of linhas) {
       const t = l[9];
       if (t !== '3') continue; // so batidas
       const nsr = parseInt(l.substring(0, 9), 10);
+      if (!Number.isFinite(nsr) || nsr <= desdeNsr) continue;
       const is671 = l.length > 14 && l[14] === '-';
-      let documento = '';
+      const documento = extrairDocumento(l);
       let data = null;
       try {
         if (is671) {
-          documento = l.substring(34, 45);
-          const dh = l.substring(10, 29);
-          data = new Date(dh);
+          data = new Date(l.substring(10, 29));
         } else {
           const d = l.substring(10, 12), m = l.substring(12, 14), y = l.substring(14, 18);
           const hh = l.substring(18, 20), mm = l.substring(20, 22);
-          documento = l.substring(22, 34);
           data = new Date(y, parseInt(m, 10) - 1, d, hh, mm);
         }
       } catch {}
-      await this.pool.query(
-        'INSERT INTO afd (id_Equipamento, PIS, NSR, Data, Tipo, Dado, CRC) VALUES (?, ?, ?, ?, 3, ?, NULL) ' +
-        'ON DUPLICATE KEY UPDATE Dado = VALUES(Dado)',
-        [idEquipamento, documento || null, nsr, data, l.trim()]
-      );
+      valores.push('(?, ?, ?, ?, 3, ?, NULL)');
+      params.push(idEquipamento, documento || null, nsr, data, l.trim());
+      gravadas++;
+      if (valores.length >= 500) await enviar();
     }
+    await enviar();
+    return gravadas;
   }
 
   // Grava pessoa no REP. 1510 -> PIS; 671 -> CPF. Ambas colunas existem.
+  //
+  // Upsert por PIS/CPF: antes cada "Salvar" criava uma linha nova. O operador
+  // que salvasse na nuvem e depois tentasse enviar ao REP duplicava o cadastro.
   async gravarPessoa(p) {
     const is671 = p.portaria === '671';
-    const sql = `INSERT INTO pessoas
-      (PIS, CPF, Nome, Codigo, Senha, Matricula, Admin, Rfid, Barras, Excluido, ExcluidoDefinitivo, DataAtualizacao)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NOW())`;
-    const params = [
-      is671 ? null : (p.pis || null),
-      is671 ? (p.cpf || null) : null,
-      p.nome,
+    const docs = is671 ? p.cpf : p.pis;
+    const campos = [
+      p.nome ?? null,
       p.codigo || null,
       p.senha || null,
       p.matricula || null,
       p.admin ? 1 : 0,
       p.rfid || null,
       p.barras || null,
+    ];
+    if (docs) {
+      const col = is671 ? 'CPF' : 'PIS';
+      const [ex] = await this.pool.query(
+        `SELECT id_pessoa FROM pessoas WHERE ${col} = ? LIMIT 1`, [docs]
+      );
+      if (ex.length) {
+        await this.pool.query(
+          `UPDATE pessoas SET Nome=?, Codigo=?, Senha=COALESCE(?, Senha), Matricula=?, Admin=?,
+                  Rfid=COALESCE(?, Rfid), Barras=COALESCE(?, Barras), DataAtualizacao=NOW()
+            WHERE id_pessoa=?`,
+          [...campos, ex[0].id_pessoa]
+        );
+        return ex[0].id_pessoa;
+      }
+    }
+    const sql = `INSERT INTO pessoas
+      (PIS, CPF, Nome, Codigo, Senha, Matricula, Admin, Rfid, Barras, Excluido, ExcluidoDefinitivo, DataAtualizacao)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NOW())`;
+    const params = [
+      is671 ? null : (p.pis || null),
+      is671 ? (p.cpf || null) : null,
+      ...campos,
     ];
     const [res] = await this.pool.query(sql, params);
     return res.insertId;
@@ -153,30 +194,91 @@ export class IdCloudClient {
   }
 
   // Importa/atualiza um funcionario vindo da memoria do REP (por PIS/CPF).
-  async importarPessoa({ pis, cpf, nome, portaria }) {
-    const is671 = portaria === '671';
+  // Traz o cadastro completo do aparelho (codigo, matricula, rfid, barras,
+  // senha, admin), nao so o nome. A senha vazia no REP NAO apaga a senha que
+  // ja existe na nuvem (COALESCE).
+  async importarPessoa(p) {
+    const is671 = p.portaria === '671' || (!p.pis && p.cpf);
     const col = is671 ? 'CPF' : 'PIS';
-    const val = cpf || pis;
-    const [ex] = await this.pool.query(`SELECT id_pessoa FROM pessoas WHERE ${col} = ?`, [val]);
+    const val = is671 ? p.cpf : p.pis;
+    if (!val) throw new Error('Funcionario sem PIS/CPF');
+    const [ex] = await this.pool.query(
+      `SELECT id_pessoa, Senha FROM pessoas WHERE ${col} = ? LIMIT 1`, [val]
+    );
     if (ex.length) {
-      await this.pool.query('UPDATE pessoas SET Nome = ? WHERE id_pessoa = ?', [nome || null, ex[0].id_pessoa]);
+      await this.pool.query(
+        `UPDATE pessoas SET Nome=?, Codigo=?, Senha=COALESCE(?, Senha), Matricula=?,
+                Admin=?, Rfid=?, Barras=?, Excluido=0, ExcluidoDefinitivo=0, DataAtualizacao=NOW()
+          WHERE id_pessoa=?`,
+        [p.nome || null, p.codigo ?? null, p.senha || null, p.matricula ?? null,
+          p.admin ? 1 : 0, p.rfid || null, p.barras || null, ex[0].id_pessoa]
+      );
       return ex[0].id_pessoa;
     }
     const [r] = await this.pool.query(
-      `INSERT INTO pessoas (PIS, CPF, Nome, Codigo, Senha, Matricula, Admin, Excluido, ExcluidoDefinitivo, DataAtualizacao)
-       VALUES (?, ?, ?, 0, '1234', 0, 0, 0, 0, NOW())`,
-      [is671 ? null : (pis || null), is671 ? (cpf || null) : null, nome || null]
+      `INSERT INTO pessoas
+        (PIS, CPF, Nome, Codigo, Senha, Matricula, Admin, Rfid, Barras,
+         Excluido, ExcluidoDefinitivo, DataAtualizacao)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NOW())`,
+      [is671 ? null : (p.pis || null), is671 ? (p.cpf || null) : null, p.nome || null,
+        p.codigo ?? null, p.senha || '1234', p.matricula ?? null, p.admin ? 1 : 0,
+        p.rfid || null, p.barras || null]
     );
     return r.insertId;
   }
 
+  // Importa a empresa/empregador que o REP tem na memoria (load_company).
+  // Grava em `empregadores` (contrato iDCloud) e aponta o equipamento para ela.
+  // Se ja existir uma empresa com o mesmo CNPJ/CPF, atualiza em vez de duplicar.
+  async importarEmpresa({ idEquipamento, empresa }) {
+    if (!empresa) return null;
+    const nome = String(empresa.name || empresa.nome || '').slice(0, 50) || null;
+    const local = String(empresa.address || empresa.endereco || '').slice(0, 100) || null;
+    const doc = String(empresa.cpf_cnpj || empresa.cnpj || empresa.cpf || '').replace(/\D/g, '') || null;
+    const cei = String(empresa.cei || '').replace(/\D/g, '') || null;
+    const tipo = Number(empresa.tipo_doc || 0);
+    const tipoDocumento = tipo === 2 ? 'CPF' : 'CNPJ';
+    const cpf = tipo === 2 ? doc : null;
+
+    let id = null;
+    if (doc) {
+      const [ex] = await this.pool.query(
+        'SELECT id_Empregador FROM empregadores WHERE CNPJ_CPF = ? LIMIT 1', [doc]
+      );
+      if (ex.length) {
+        id = ex[0].id_Empregador;
+        await this.pool.query(
+          'UPDATE empregadores SET RazaoSocial=?, Local=?, CEI=?, CPF=? WHERE id_Empregador=?',
+          [nome, local, cei, cpf, id]
+        );
+      }
+    }
+    if (!id) {
+      const [r] = await this.pool.query(
+        'INSERT INTO empregadores (RazaoSocial, Local, CNPJ_CPF, CEI, CPF) VALUES (?, ?, ?, ?, ?)',
+        [nome, local, doc, cei, cpf]
+      );
+      id = r.insertId;
+    }
+    await this.pool.query(
+      'UPDATE equipamentos SET id_Empregador = ? WHERE id_Equipamento = ?', [id, idEquipamento]
+    );
+    return {
+      id_Empregador: id, RazaoSocial: nome, Local: local,
+      CNPJ_CPF: doc, CEI: cei, tipo_documento: tipoDocumento,
+    };
+  }
+
   // Grava/atualiza um template biometrico (digital ou face) de uma pessoa.
+  // `Template` e' o nome que o contrato iDCloud usa; `dados` e' o nosso. Manter
+  // os dois iguais e' o que permite o REP/outro sistema ler a biometria.
   async gravarTemplate(id_pessoa, tipo, indice, dados) {
     if (!dados) return;
     await this.pool.query(
-      `INSERT INTO templates (id_pessoa, tipo, indice, dados, DataAtualizacao) VALUES (?, ?, ?, ?, NOW())
-       ON DUPLICATE KEY UPDATE dados = VALUES(dados), DataAtualizacao = NOW()`,
-      [id_pessoa, tipo, indice, dados]
+      `INSERT INTO templates (id_pessoa, tipo, indice, dados, Template, DataAtualizacao)
+       VALUES (?, ?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE dados = VALUES(dados), Template = VALUES(Template), DataAtualizacao = NOW()`,
+      [id_pessoa, tipo, indice, dados, dados]
     );
   }
 
@@ -289,7 +391,7 @@ export class IdCloudClient {
     // empresa mais ativa no periodo — util como "destaque" do painel
     const [topPessoas] = await this.pool.query(
       `SELECT p.id_pessoa, p.Nome, p.PIS, p.CPF, COUNT(*) AS c
-         FROM afd a JOIN pessoas p ON p.PIS = a.PIS
+         FROM afd a JOIN pessoas p ON (p.PIS = a.PIS OR p.CPF = a.PIS)
         WHERE a.Data >= ? AND a.Data < DATE_ADD(?, INTERVAL 1 DAY)
         GROUP BY p.id_pessoa, p.Nome, p.PIS, p.CPF
         ORDER BY c DESC LIMIT 5`,

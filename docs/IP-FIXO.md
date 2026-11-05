@@ -72,12 +72,18 @@ para o REP apontar, o modo não sobe. Ver §5.1.
 
 ### 5.1 Para `rep_empurra` (IP fixo na frente do app)
 
-#### Opção A — VPS barato como proxy reverso para a Railway  ← **recomendada**
+#### Opção A — VPS barato como relay L4 para a Railway  ← **recomendada**
 ```
-REP ──HTTPS 443──▶ [VPS: IP fixo + Caddy/nginx + cert Let's Encrypt]
-                         │
-                         └──HTTPS──▶ https://izcloud-conection-production.up.railway.app
+REP ──TLS 1.2 / 443──▶ [VPS: IP fixo + nginx stream/socat]
+                          │  TCP puro (NÃO termina TLS)
+                          └──▶ Railway TCP Proxy ──▶ idcloudServer no container
 ```
+> **Correção importante (04/11/2026):** para o **canal do REP**, o relay tem de
+> ser **L4 (TCP puro)**. Um proxy L7 (Caddy/nginx HTTP) termina o TLS e roteia
+> por SNI/`Host` — e o REP não envia nenhum dos dois. L7 só serve para a API/UI
+> (que usam domínio). Para o REP, o TLS tem de chegar intacto ao
+> `idcloudServer`, que escuta numa porta interna (ex.: `IDCLOUD_PORTA=4443`)
+> publicada pelo TCP Proxy da Railway.
 - ✅ IP público fixo real, barato, ~US$ 4–6/mês (provedores: Hetzner, DigitalOcean,
   Vultr, OVH, Contabo, Lightsail — **preços e disponibilidade a verificar**; a conta
   do Oracle falhou antes, então convém testar o cadastro antes de projetar em cima).
@@ -86,6 +92,15 @@ REP ──HTTPS 443──▶ [VPS: IP fixo + Caddy/nginx + cert Let's Encrypt]
 - ✅ A VPS é burra: só encaminha requisições. Nenhum estado fica lá.
 - ⚠️ Custo recorrente e mais uma coisa para manter/monitorar.
 - ⚠️ Se a Railway mudar o domínio, atualiza 1 arquivo de config na VPS.
+
+**Exemplo verificado em 05/11/2026 — InterServer 1 slice ($3/mês):**
+1 core, **2GB RAM**, 40GB SSD, 2TB de tráfego, **IP público estático**, root,
+KVM, regiões EUA (NYC/Dallas/LA), cobrança mensal (sem trial/money-back).
+Serve como relay L4 (nginx stream/socat) e até para uma instalação pequena do
+iZCloud. Confirmar antes de contratar: **TCP 443 de entrada liberado** e IP
+estático (a página do provedor diz "static public IP addresses"). Para o
+iDFace esse VPS **não é necessário**: o push aceita URL/domínio e a Railway
+pode receber direto.
 
 #### Opção B — Migrar tudo para a VPS
 MySQL + Node na VPS, com IP fixo. Perde o auto-deploy e o banco gerenciado da
@@ -147,9 +162,11 @@ a Opção A (VPS) resolve por uma fração do custo.
 2. Fazer o deploy `nuvem_puxa` com **Cloudflare Tunnel ou Tailscale** no lado do
    cliente. Sem IP fixo, sem custo.
 
-**Médio prazo (se `rep_empurra` for realmente necessário):**
-3. Provisionar a **Opção A** (VPS + Caddy + Let's Encrypt → Railway). ~US$ 4–6/mês.
+**Médio prazo (para o canal do REP em produção):**
+3. Provisionar a **Opção A** com relay **L4** (VPS com IP fixo, nginx stream ou
+   socat → Railway TCP Proxy → `idcloudServer`). ~US$ 4–6/mês.
    Entregar como produto: "o iZCloud te dá um IP fixo para apontar no seu REP".
+   **Não** usar Caddy/nginx L7 nessa porta: o REP não manda SNI/Host.
 
 **Não fazer:** Spectrum sem Enterprise; Oracle Cloud Free (já falhou uma vez).
 

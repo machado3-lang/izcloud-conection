@@ -26,6 +26,9 @@ rep_http_*.bin
 cert.pem
 chave.pem
 
+# dumps de diagnostico do iDFace (comparacao antes/depois RHiD)
+idface_dump_*.json
+
 # sondagens e dumps do canal iDCloud
 descobre_porta.log
 teste_offset.log

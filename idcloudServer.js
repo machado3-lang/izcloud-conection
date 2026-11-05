@@ -17,9 +17,11 @@
 // derrubar a conexao se nao for o REP esperado daquele vagao. A sessao nunca sai
 // da conexao que a originou.
 import tls from 'tls';
-import { parseAFD } from './afd.js';
+import { parseAFD, detectarTipo } from './afd.js';
+import { salvarArquivoAfd } from './afdStore.js';
 import { IdCloudClient } from './idcloud.js';
-import { getTenantPool, registrarConexaoRep, registrarColetaRep, estadoColetaRep } from './core.js';
+import { getTenantPool, registrarConexaoRep, registrarColetaRep, estadoColetaRep, buscarRepPorSerial } from './core.js';
+import { importarDoRep } from './importarRep.js';
 
 const log = (...a) => console.log('[idcloud]', ...a);
 
@@ -37,25 +39,64 @@ export const COMANDOS = new Set([
   'load_company',
 ]);
 
-// Um "vagao": qual REP esta autorizado a usar a proxima conexao. Populado por
-// quem programa o atendimento (a UI chama reservedEsperaDeRep).
-const vagas = new Map();   // id_reps -> timestamp
+// Uma "vaga": qual REP esta autorizado a usar a proxima conexao. A vaga precisa
+// carregar o SCHEMA do tenant e o SERIAL: a conexao chega so com o nSerie, e sem
+// isso a coleta nao sabe em qual banco gravar (antes ela usava o serial como se
+// fosse o nome do schema).
+const vagas = new Map();   // id_reps -> { id_reps, schema, serial, passcode, ate }
 
-export function reservarVaga(id_reps, minutos = 30) {
+export function reservarVaga(id_reps, minutos = 30, { schema = null, serial = null, passcode = null } = {}) {
   const ate = Date.now() + minutos * 60 * 1000;
-  vagas.set(String(id_reps), ate);
+  vagas.set(String(id_reps), {
+    id_reps: Number(id_reps) || 0,
+    schema: schema || null,
+    serial: serial ? String(serial) : null,
+    passcode: passcode || null,
+    ate,
+  });
   // O proprio REP pode reconectar varias vezes; a vaga vale para a janela toda.
-  if (vagas.size > 200) for (const [k, t] of vagas) if (t < Date.now()) vagas.delete(k);
+  if (vagas.size > 200) for (const [k, v] of vagas) if (v.ate < Date.now()) vagas.delete(k);
   return ate;
 }
 
-function vagaPara(nSerie) {
-  let livre = null;
-  for (const [id, ate] of vagas) {
-    if (ate > Date.now()) { livre = { id, ate }; break; }
-    vagas.delete(id);
+// Usado pelos testes e por um restart controlado.
+export function limparVagas() { vagas.clear(); }
+
+// Vaga exata (serial) tem prioridade; uma vaga sem serial serve para qualquer
+// aparelho. `agora` existe para testar expiracao sem esperar.
+export function vagaPara(nSerie, agora = Date.now()) {
+  const alvo = String(nSerie || '');
+  let generica = null;
+  for (const [id, v] of vagas) {
+    if (v.ate <= agora) { vagas.delete(id); continue; }
+    if (v.serial) {
+      if (v.serial === alvo) return v;
+    } else if (!generica) {
+      generica = v;
+    }
   }
-  return livre;
+  return generica;
+}
+
+// Resolve a vaga de uma conexao. Se nao houver reserva manual, aceita
+// automaticamente o REP cujo serial ja esta cadastrado em alguma empresa ativa.
+// `IDCLOUD_AUTOACEITE=false` volta ao modelo antigo (so reserva manual).
+async function resolverVaga(nSerie) {
+  const vaga = vagaPara(nSerie);
+  if (vaga && vaga.schema) return vaga;
+
+  const auto = /^(1|true|sim)$/i.test(String(process.env.IDCLOUD_AUTOACEITE ?? 'true'));
+  if (!auto) return vaga;
+
+  let achado = null;
+  try { achado = await buscarRepPorSerial(nSerie); }
+  catch (e) { log(`busca do serial ${nSerie} falhou: ${e.message}`); }
+  if (!achado) return vaga;
+
+  // Uma vaga generica (sem schema) pode ser completada pelo serial cadastrado.
+  if (vaga) return Object.assign(vaga, achado, { ate: vaga.ate });
+  log(`REP ${nSerie} reconhecido automaticamente em ${achado.schema}`);
+  return { ...achado, ate: Date.now() + 60 * 1000 };
 }
 
 // Cliente FCGI que fala com um REP por uma conexao TLS ja aberta.
@@ -109,13 +150,18 @@ class SessaoRep {
   pedir(comando, corpo = {}, { binario = false } = {}) {
     if (this.socket.destroyed) return Promise.reject(new Error('conexao fechada'));
     if (this.pendente) return Promise.reject(new Error('comando anterior ainda em andamento'));
+    const base = String(comando).split('?')[0];
+    if (!COMANDOS.has(base)) return Promise.reject(new Error(`comando nao permitido: ${base}`));
     const b = Buffer.from(JSON.stringify(corpo), 'utf-8');
     const req = Buffer.from(
       `POST /${comando}.fcgi HTTP/1.1\r\nHost: idcloud\r\nUser-Agent: iZCloud/1.0\r\n` +
       `Accept: */*\r\nContent-Type: application/json\r\n` +
       `Content-Length: ${b.length}\r\nConnection: keep-alive\r\n\r\n`, 'latin1');
     return new Promise((res, rej) => {
-      const timer = setTimeout(() => { this.pendente = null; rej(new Error(`${comando}: timeout`)); }, 30000);
+      // get_afd pode devolver o arquivo inteiro (dezenas de milhares de linhas);
+      // load_users com templates tambem pode passar de centenas de KB.
+      const ms = base === 'get_afd' ? 120000 : (base === 'load_users' ? 60000 : 30000);
+      const timer = setTimeout(() => { this.pendente = null; rej(new Error(`${comando}: timeout`)); }, ms);
       timer.unref?.();
       this.pendente = { res, rej, timer };
       // O REP precisa de um instante depois do handshake antes de aceitar o
@@ -134,29 +180,37 @@ class SessaoRep {
 export async function atenderConexao(socket) {
   const rep = new SessaoRep(socket);
   try {
-    // 1) primeira coisa: qual REP e' esse? Sem isso qualquer um entra.
-    const about = await rep.pedir('get_about', {});
+    // 1) Neste firmware (v1048) `get_about` EXIGE sessao: sem `session` ele
+    // responde 401. O canal antigo chamava get_about antes do login e por isso
+    // nunca identificava o REP. O login tem de vir primeiro.
+    //
+    // Limitacao de protocolo: o REP nao se apresenta; a senha do web server e'
+    // enviada antes de sabermos o serial. Use uma senha forte (REP_ADMIN_SENHA)
+    // e restrinja ao maximo quem alcanca a 443.
+    const senhaAdmin = process.env.REP_ADMIN_SENHA || 'admin';
+    const login = await rep.pedir('login', { login: 'admin', password: senhaAdmin });
+    rep.session = login.dados?.session || null;
+    if (!rep.session) throw new Error('login sem session');
+
+    // 2) agora sim: qual REP e' esse?
+    const about = await rep.pedir('get_about', { session: rep.session });
     const nSerie = String(about.dados?.nSerie || '');
     rep.nSerie = nSerie;
     if (!nSerie) throw new Error('REP nao devolveu nSerie');
 
-    const vaga = vagaPara(nSerie);
+    const vaga = await resolverVaga(nSerie);
     if (!vaga) {
-      log(`conexao de ${nSerie} RECUSADA: nenhum REP reservado`);
+      log(`conexao de ${nSerie} RECUSADA: REP nao cadastrado e nenhuma vaga reservada`);
       socket.end();
       return null;
     }
-    log(`REP ${nSerie} conectado (id_reps=${vaga.id})`);
+    log(`REP ${nSerie} conectado (id_reps=${vaga.id_reps} schema=${vaga.schema || '-'})`);
 
-    // 2) sessao FCGI na MESMA conexao
-    const login = await rep.pedir('login', { login: 'admin', password: process.env.REP_ADMIN_SENHA || 'admin' });
-    rep.session = login.dados?.session || null;
-    if (!rep.session) throw new Error('login sem session');
-
+    // 3) estado do aparelho
     const info = await rep.pedir('get_system_information', { session: rep.session });
     log(`REP ${nSerie}: ${info.dados?.user_count} usuarios, NSR ${info.dados?.last_nsr}`);
 
-    return { rep, id_reps: vaga.id, schema: nSerie, sobre: about.dados, info: info.dados };
+    return { rep, id_reps: vaga.id_reps, schema: vaga.schema, sobre: about.dados, info: info.dados };
   } catch (e) {
     log(`conexao recusada: ${e.message}`);
     socket.end();
@@ -167,31 +221,32 @@ export async function atenderConexao(socket) {
 // Baixa o AFD do REP, sem tocar no banco. Separado da gravacao de proposito:
 // da para exercitar o canal inteiro numa maquina sem MySQL.
 //
-// CUIDADO com o cursor: o `offset` e o `limit` do REP contam LINHAS do arquivo,
-// nao NSR. E o arquivo comeca pelo rodape e pelos registros antigos de 2017 —
-// as batidas (tipo 3) so aparecem bem depois. Por isso o limite padrao e alto:
-// com limit=10 volta so cabecalho e registros velhos, e parece que nao ha
-// nenhuma batida.
-// Teto que o REP aceita em get_afd. Acima disso ele responde
+// Teto que o REP aceita em `limit`. Acima disso ele responde
 // "'limit' máximo é 1000" — medido no aparelho.
 export const LIMITE_AFD_MAX = 1000;
 
-// LIMITE REAL DO APARELHO (medido, nao chute):
-//   - o limite máximo é 1000
-//   - o 'offset' e' aceito mas IGNORADO
-//   - nsrInicial, start, from, skip, dataInicio, mode, coletor... nao paginam
-//   => o REP sempre devolve as PRIMEIRAS N linhas do arquivo
+// O QUE MUDOU AQUI (04/11/2026):
+// A documentacao concluiu que o REP "nao pagina" e que so daria para ver as
+// primeiras 1000 linhas. Mas o README §9 registra 38.523 linhas baixadas pelo
+// `repClient.baixarAfd`, que NAO envia `limit`. A hipotese mais forte e' que
+// omitir o campo devolve o arquivo inteiro; o canal estava se limitando sozinho.
 //
-// Isso significa que so vemos o comeco do AFD. Como o arquivo cresce anexando no
-// fim, as batidas mais novas ficam fora do alcance enquanto ele nao rotacionar.
-// Por isso a gravacao tem de ser idempotente por NSR (ver unico em afd) e a
-// coleta guarda o maior NSR visto: quando o aparelho rotacionar, a janela
-// avanca e o resto entra sozinho.
-export async function baixarAfd(ctx, { limite = LIMITE_AFD_MAX, offset = 0 } = {}) {
-  const limiteReal = Math.min(Number(limite) || LIMITE_AFD_MAX, LIMITE_AFD_MAX);
-  const r = await ctx.rep.pedir('get_afd', { session: ctx.rep.session, limit: limiteReal, offset }, { binario: true });
+// Padrao: NAO envia `limit` (arquivo inteiro). `IDCLOUD_AFD_LIMIT` permite
+// voltar ao comportamento antigo (ex.: 1000) sem alterar codigo.
+function limiteAfdPadrao() {
+  const n = Number(process.env.IDCLOUD_AFD_LIMIT ?? 0);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, LIMITE_AFD_MAX) : 0;
+}
+
+export async function baixarAfd(ctx, { limite = undefined, offset = 0 } = {}) {
+  const lim = limite === undefined
+    ? limiteAfdPadrao()
+    : Math.min(Math.max(Number(limite) || 0, 0), LIMITE_AFD_MAX);
+  const corpo = { session: ctx.rep.session, offset };
+  if (lim > 0) corpo.limit = lim;
+  const r = await ctx.rep.pedir('get_afd', corpo, { binario: true });
   const texto = (r.binario || '').trim();
-  if (!texto) return { texto: '', batidas: 0, linhas: 0, ultimoNsr: null, paginas: 0 };
+  if (!texto) return { texto: '', batidas: 0, linhas: 0, ultimoNsr: null, paginas: 0, truncado: false };
   const linhas = texto.split(/\r?\n/).filter((l) => l.trim());
   const { registros } = parseAFD(texto);
   return {
@@ -200,7 +255,9 @@ export async function baixarAfd(ctx, { limite = LIMITE_AFD_MAX, offset = 0 } = {
     batidas: registros.length,
     ultimoNsr: registros.at(-1)?.nsr ?? null,
     paginas: 1,
-    truncado: linhas.length >= limiteReal,
+    // So da para afirmar que truncou quando NOS limitamos a janela.
+    truncado: lim > 0 && linhas.length >= lim,
+    limite: lim || null,
   };
 }
 
@@ -209,15 +266,17 @@ export async function sincronizarAfd(ctx, opcoes = {}) {
   const { texto, batidas, ultimoNsr } = await baixarAfd(ctx, opcoes);
   if (!texto) return { batidas: 0, motivo: 'AFD vazio' };
   const client = new IdCloudClient(getTenantPool(ctx.schema));
-  const novas = await client.salvarAfd(BigInt(0), texto.split(/\r?\n/));
+  const novas = await client.salvarAfd(ctx.rep.nSerie, texto.split(/\r?\n/));
   log(`AFD de ${ctx.rep.nSerie}: ${batidas} batidas, ${novas} gravadas`);
   return { batidas, novas, ultimoNsr };
 }
 
 // Le os funcionarios do REP. O mapeamento para o schema do tenant fica a
 // cargo de quem chamar: aqui devolvemos o cru, sem inventar campo.
-export async function lerFuncionarios(ctx, { limite = 500, offset = 0 } = {}) {
-  const r = await ctx.rep.pedir('load_users', { session: ctx.rep.session, limit: limite, offset });
+export async function lerFuncionarios(ctx, { limite = 100, offset = 0, templates = false } = {}) {
+  const corpo = { session: ctx.rep.session, limit: limite, offset };
+  if (templates) corpo.templates = true;
+  const r = await ctx.rep.pedir('load_users', corpo);
   return r.dados?.users || [];
 }
 
@@ -228,26 +287,79 @@ export async function lerEmpresa(ctx) {
 
 // Coleta completa de uma conexao: baixa o AFD a partir do cursor, grava no
 // tenant e atualiza o estado. E' o que roda quando o REP conecta.
-export async function coletar(ctx, { limite = LIMITE_AFD_MAX } = {}) {
+export async function coletar(ctx, { limite = undefined } = {}) {
   const schema = ctx.schema;
+  if (!schema) throw new Error('coleta sem schema de tenant (vaga incompleta)');
   await registrarConexaoRep(schema, { id_reps: ctx.id_reps, serial: ctx.rep.nSerie });
   try {
+    const client = new IdCloudClient(getTenantPool(schema));
+
+    // Primeiro contato: se o tenant ainda nao tem funcionarios, le a empresa e
+    // os funcionarios que JA ESTAO na memoria do REP. Isso evita redigitar o
+    // cadastro de um REP que chega pronto. Nao sobrescreve um tenant ja
+    // povoado; para reimportar use POST /api/reps/:id/importar.
+    const autoImport = /^(1|true|sim)$/i.test(String(process.env.IDCLOUD_IMPORTAR_AUTOMATICO ?? 'true'));
+    if (autoImport) {
+      const [p] = await client.pool.query('SELECT COUNT(*) AS n FROM pessoas');
+      if (!Number(p[0]?.n || 0)) {
+        try {
+          const empresa = await lerEmpresa(ctx);
+          const usuarios = [];
+          for (let offset = 0, i = 0; i < 100; i++) {
+            const pagina = await lerFuncionarios(ctx, { limite: 100, offset, templates: true });
+            if (!pagina.length) break;
+            usuarios.push(...pagina);
+            offset += pagina.length;
+            if (pagina.length < 100) break;
+          }
+          const imp = await importarDoRep({ client, idEquipamento: ctx.id_reps, empresa, usuarios });
+          log(`importacao inicial de ${ctx.rep.nSerie}: ${imp.pessoas} funcionarios, ` +
+              `${imp.templates} templates, ${imp.ignorados} ignorados`);
+        } catch (e) {
+          log(`importacao inicial falhou (a coleta continua): ${e.message}`);
+        }
+      }
+    }
+
     const est = await estadoColetaRep(schema, ctx.id_reps);
+    const anterior = Number(est?.ultimo_nsr || 0);
     const { texto, batidas, ultimoNsr, truncado } = await baixarAfd(ctx, { limite, offset: 0 });
     if (!texto) {
       await registrarColetaRep(schema, { id_reps: ctx.id_reps, batidas: 0, novas: 0 });
       return { batidas: 0, novas: 0, vazio: true };
     }
-    const client = new IdCloudClient(getTenantPool(schema));
-    // Idempotente por NSR: o REP devolve sempre o comeco do arquivo, entao a
-    // mesma janela volta a cada coleta. Quem evita duplicar e' o indice unico
-    // (id_Equipamento, NSR) da tabela afd.
-    const novas = await client.salvarAfd(ctx.rep.nSerie, texto.split(/\r?\n/));
-    const anterior = Number(est?.ultimo_nsr || 0);
+    // Idempotente por NSR. O `desdeNsr` evita reprocessar o arquivo inteiro:
+    // no primeiro contato ele e' 0 (tudo entra); nas proximas, so o que avancou.
+    // O UNIQUE(id_Equipamento, NSR) continua sendo a rede de seguranca.
+    const novas = await client.salvarAfd(ctx.rep.nSerie, texto.split(/\r?\n/), { desdeNsr: anterior });
+
+    // Guarda o AFD bruto (header + tipo 3 + trailer) para o cliente baixar
+    // depois. Nao pode derrubar a coleta: se o disco falhar, as batidas ja
+    // estao no banco.
+    try {
+      const linhasAfd = texto.split(/\r?\n/).filter((l) => l.trim());
+      const primeira = linhasAfd.find((l) => l[9] === '3');
+      const formato = primeira ? detectarTipo(primeira) : '1510';
+      const nsrs = linhasAfd.filter((l) => l[9] === '3')
+        .map((l) => parseInt(l.substring(0, 9), 10)).filter(Number.isFinite);
+      await salvarArquivoAfd(getTenantPool(schema), {
+        schema,
+        origem: 'idclass',
+        formato: formato === '671' ? '671' : '595',
+        serial: ctx.rep.nSerie,
+        idEquipamento: ctx.id_reps,
+        texto,
+        nsrInicial: nsrs.length ? Math.min(...nsrs) : null,
+        nsrFinal: nsrs.length ? Math.max(...nsrs) : null,
+      });
+    } catch (e) {
+      log(`aviso: AFD bruto de ${ctx.rep.nSerie} nao foi salvo: ${e.message}`);
+    }
+
     const avancou = !ultimoNsr || !anterior || Number(ultimoNsr) > anterior;
     await registrarColetaRep(schema, { id_reps: ctx.id_reps, ultimoNsr, batidas, novas });
     log(`coleta de ${ctx.rep.nSerie}: ${batidas} batidas na janela, ${novas} novas` +
-        (truncado ? ' (janela truncada em 1000 linhas: o aparelho nao pagina)' : ''));
+        (truncado ? ' (janela limitada: confira o historico completo)' : ''));
     return { batidas, novas, ultimoNsr, avancou, truncado };
   } catch (e) {
     await registrarColetaRep(schema, { id_reps: ctx.id_reps, erro: e.message });

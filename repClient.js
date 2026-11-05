@@ -61,8 +61,13 @@ export async function probe(ip, porta, usuario, senha) {
     conectado: true, sessao: sess,
     modelo: about.model || about.nSerie || '',
     serial: about.nSerie || '',
-    firmware: about.versionFW || '',          // decimal (display mostra hex: 1048 = 0x418 = "418")
+    // A API devolve o firmware em DECIMAL; o display do REP mostra o mesmo
+    // valor em HEX. Ex.: versionFW=1048 -> 0x418 -> display "418".
+    firmware: about.versionFW || '',
     firmwareHex: about.versionFW ? '0x' + Number(about.versionFW).toString(16).toUpperCase() : '',
+    firmwareDisplay: about.versionFW ? Number(about.versionFW).toString(16).toUpperCase() : '',
+    mrp: about.versionMRP || '',
+    mrpDisplay: about.versionMRP ? Number(about.versionMRP).toString(16).toUpperCase() : '',
     isFacial: !!about.isFacial,
     portaria,                                  // '1510' | '671' | null (null => usuario informa)
     usuarios: info.user_count ?? null,
@@ -80,12 +85,18 @@ export async function enviarUsuarios(ip, porta, usuarios, portaria, usuario = 'a
   const idField = portaria === '1510' ? 'pis' : 'cpf';
   const payload = usuarios
     .map((u) => {
+      // O cadastro manual na UI manda `matricula`/`senha`; o import do REP usa
+      // `registration`/`password`. Normalizar aqui evita mandar 0/1234 no lugar
+      // do que o operador digitou.
+      const matricula = u.registration ?? u.matricula ?? 0;
+      const codigo = u.code ?? u.codigo ?? matricula;
+      const documento = u[idField] ?? matricula;
       const obj = {
-        [idField]: parseInt(String(u[idField] || u.registration || '0').replace(/\D/g, '') || '0'),
+        [idField]: parseInt(String(documento).replace(/\D/g, '') || '0'),
         name: u.name || u.nome || '',
-        registration: parseInt(String(u.registration || '0').replace(/\D/g, '') || '0'),
-        code: parseInt(String(u.code || u.registration || '0').replace(/\D/g, '') || '0'),
-        password: String(u.password || '1234'),
+        registration: parseInt(String(matricula).replace(/\D/g, '') || '0'),
+        code: parseInt(String(codigo).replace(/\D/g, '') || '0'),
+        password: String(u.password || u.senha || '1234'),
       };
       if (Array.isArray(u.templates) && u.templates.length) obj.templates = u.templates;
       if (Array.isArray(u.facial) && u.facial.length) obj.facial = u.facial;
@@ -97,33 +108,86 @@ export async function enviarUsuarios(ip, porta, usuarios, portaria, usuario = 'a
   return r;
 }
 
-// Le usuarios (e biometria) da memoria do REP. Tenta load_users e, se vazio, get_users.
-export async function lerUsuarios(ip, porta, usuario = 'admin', senha = 'admin') {
+// Le usuarios (e biometria) da memoria do REP.
+//
+// Medido no REP real (v1048): `load_users` EXIGE `limit` e `offset` inteiros e
+// o teto de `limit` e 100. Sem isso o aparelho responde
+// "'limit' deve ser do tipo inteiro". `templates: true` devolve os templates
+// base64 (o padrao so devolve `templates_count`). A resposta traz `count` com o
+// total, entao paginamos ate acabar.
+export async function lerUsuarios(ip, porta, usuario = 'admin', senha = 'admin', { templates = true, limite = 100 } = {}) {
   const sess = await login(ip, porta, usuario, senha);
-  let r = await proxyREP(ip, porta, 'load_users', { session: sess }).catch(() => null);
-  if (!r || (!r.users && !Array.isArray(r))) {
-    r = await proxyREP(ip, porta, 'get_users', { session: sess }).catch(() => null);
+  const todos = [];
+  let offset = 0;
+  let total = null;
+
+  for (let pagina = 0; pagina < 1000; pagina++) {
+    const corpo = { session: sess, limit: limite, offset };
+    if (templates) corpo.templates = true;
+    const r = await proxyREP(ip, porta, 'load_users', corpo).catch(() => null);
+    const users = r?.users || (Array.isArray(r) ? r : []);
+    if (!users.length) break;
+    todos.push(...users);
+    total = Number(r?.count ?? total ?? todos.length);
+    offset += users.length;
+    if (users.length < limite || offset >= total) break;
   }
+
+  if (todos.length) return todos;
+
+  // Firmware antigo que nao aceita limit/offset: tenta o comando legado.
+  const r = await proxyREP(ip, porta, 'get_users', { session: sess }).catch(() => null);
   return r?.users || (Array.isArray(r) ? r : []);
 }
 
-// Mapeia um usuario cru do REP para { pis, cpf, nome, tipo, templates[] } de forma defensiva.
+// Le a empresa/empregador gravada na memoria do REP (load_company).
+export async function lerEmpresa(ip, porta, usuario = 'admin', senha = 'admin') {
+  const sess = await login(ip, porta, usuario, senha);
+  const r = await proxyREP(ip, porta, 'load_company', { session: sess });
+  return r?.company || null;
+}
+
+// Mapeia um usuario cru do REP para o formato interno, de forma defensiva.
+//
+// No firmware real os templates vem como array de STRINGS base64 (um por
+// digital), nao como objetos `{template, finger}`. O indice nao vem no payload;
+// usamos a ordem (1..N) e o envio posterior pode ser ajustado se o aparelho
+// reclamar. O `pis`/`cpf` numerico e o documento; `code`, `registration`,
+// `rfid`, `bars` e `admin` completam o cadastro que ja existe no REP.
 export function mapearUsuario(u) {
   const pis = u.pis != null ? String(u.pis) : null;
   const cpf = u.cpf != null ? String(u.cpf) : null;
   const tipo = cpf ? '671' : '1510';
   const nome = u.name || u.nome || '';
-  const templates = (u.templates || []).map((t) => ({
-    tipo: 'digital',
-    indice: t.finger != null ? t.finger : (t.indice != null ? t.indice : 0),
-    dados: t.template != null ? t.template : (t.data != null ? t.data : ''),
-  }));
-  const faces = (u.facial || u.faces || u.faceTemplates || []).map((f, i) => ({
-    tipo: 'face',
-    indice: i,
-    dados: f.faceTemplate != null ? f.faceTemplate : (f.template != null ? f.template : (f.data != null ? f.data : '')),
-  }));
-  return { pis, cpf, nome, tipo, templates: [...templates, ...faces].filter((t) => t.dados) };
+  const templates = (u.templates || []).map((t, i) => {
+    if (typeof t === 'string') return { tipo: 'digital', indice: i + 1, dados: t };
+    return {
+      tipo: 'digital',
+      indice: t.finger != null ? t.finger : (t.indice != null ? t.indice : i + 1),
+      dados: t.template != null ? t.template : (t.data != null ? t.data : (t.dados != null ? t.dados : '')),
+    };
+  });
+  const faces = (u.facial || u.faces || u.faceTemplates || []).map((f, i) => {
+    if (typeof f === 'string') return { tipo: 'face', indice: i, dados: f };
+    return {
+      tipo: 'face',
+      indice: i,
+      dados: f.faceTemplate != null ? f.faceTemplate : (f.template != null ? f.template : (f.data != null ? f.data : '')),
+    };
+  });
+  return {
+    pis,
+    cpf,
+    nome,
+    tipo,
+    codigo: u.code != null ? Number(u.code) : null,
+    matricula: u.registration != null ? Number(u.registration) : null,
+    senha: u.password || null,
+    admin: !!u.admin,
+    rfid: u.rfid != null && Number(u.rfid) !== 0 ? String(u.rfid) : null,
+    barras: u.bars || null,
+    templates: [...templates, ...faces].filter((t) => t.dados),
+  };
 }
 
 export async function baixarAfd(ip, porta, dataInicio, dataFim, usuario = 'admin', senha = 'admin', mode) {

@@ -84,7 +84,9 @@ curl -X POST https://izcloud-conection-production.up.railway.app/api/auth/regist
       "login": "empresa1",
       "senha": "OUTRA_SENHA_FORTE",
       "razao_social": "Empresa 1 LTDA",
+      "tipo_documento": "CNPJ",
       "cnpj": "12345678000100",
+      "cei": "",
       "responsavel_nome": "João da Silva",
       "responsavel_cpf": "12345678909"
     }

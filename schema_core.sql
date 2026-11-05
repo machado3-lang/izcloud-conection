@@ -34,7 +34,9 @@ CREATE TABLE IF NOT EXISTS clientes (
   schema_name       VARCHAR(64) NOT NULL,      -- ex.: tenant_0007
   razao_social      VARCHAR(160),
   nome_empresa      VARCHAR(120),
-  cnpj              VARCHAR(20),
+  tipo_documento    ENUM('CNPJ','CPF') DEFAULT 'CNPJ',
+  cnpj              VARCHAR(20),                 -- CNPJ ou CPF, conforme tipo_documento
+  cei               VARCHAR(20),                 -- CEI (INSS), opcional
   endereco          VARCHAR(200),
   responsavel_nome  VARCHAR(120),
   responsavel_cpf   VARCHAR(20),
@@ -98,6 +100,8 @@ CREATE TABLE IF NOT EXISTS capturas_rep (
 -- ALTER TABLE clientes
 --   ADD COLUMN id_conta INT,
 --   ADD COLUMN razao_social VARCHAR(160),
+--   ADD COLUMN tipo_documento ENUM('CNPJ','CPF') DEFAULT 'CNPJ',
+--   ADD COLUMN cei VARCHAR(20),
 --   ADD COLUMN endereco VARCHAR(200),
 --   ADD COLUMN responsavel_nome VARCHAR(120),
 --   ADD COLUMN responsavel_cpf VARCHAR(20);

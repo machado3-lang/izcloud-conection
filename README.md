@@ -1,10 +1,16 @@
-aces# iZCloud — Nuvem própria para REPs ControlID (1510 / 671)
+# iZCloud — Nuvem própria para REPs ControlID (1510 / 671)
 
 Sistema para gerenciar pontos de marcação **ControlID iDClass (1510 e 671)** via
 própria nuvem, inspirado no modelo do **iDCloud** da ControlID — porém **sem usar o
 serviço pago deles** e com controle total dos dados.
 
-> Escopo: **somente 1510/671**. iDFace / REP-P (modo PUSH/poll) ficam de fora.
+> Escopo: **ponte/repositório para REP-C (iDClass 1510/671) e REP-P (iDFace)**.
+> Para REP-C, o iZCloud faz o papel do antigo Gerenciador de REPs: cadastro de
+> empregador/funcionários/REPs e download do AFD completo/por NSR/por data.
+> Para REP-P, coleta e armazena marcações/AFD bruto e expõe API. O tratamento
+> fiscal (AFD/AFDT/ACJEF/AEJ) é do **MultiPonto/PTRP**, que futuramente terá
+> INPI e assinatura digital. Ver
+> [`docs/RHID-COMPARATIVO.md`](docs/RHID-COMPARATIVO.md) §11.2.
 
 > **📌 Para retomar o projeto, comece por [`docs/RETOMADA.md`](docs/RETOMADA.md).**
 > É o índice único com: o que foi feito, o que falta (priorizado), e a comparação
@@ -12,6 +18,16 @@ serviço pago deles** e com controle total dos dados.
 > O problema do **IP fixo** — que trava a conexão remota com os REPs — está
 > analisado em [`docs/IP-FIXO.md`](docs/IP-FIXO.md).
 > **Criação de contas / painel de administrador** está em [`docs/ADMIN.md`](docs/ADMIN.md).
+> **iDFace (o que já temos e o que reaproveitar)** está em
+> [`docs/IDFACE.md`](docs/IDFACE.md), com os diagnósticos `test_idface.mjs`,
+> `test_idface_push.mjs` e `test_idface_dump.mjs`.
+> **Comparativo iDFace × RHiD (por que o AFD usa `users.id`, PIS/CPF e a
+> arquitetura coletor × REP-P)** está em
+> [`docs/RHID-COMPARATIVO.md`](docs/RHID-COMPARATIVO.md).
+> **Sessão 04/11/2026 (o que foi feito, validado e o que falta):**
+> [`docs/SESSAO-2026-11-04.md`](docs/SESSAO-2026-11-04.md).
+> **Continuação 05/11/2026 (iDFace real + VPS):**
+> [`docs/SESSAO-2026-11-05.md`](docs/SESSAO-2026-11-05.md).
 
 > **Escopo deste repositório:** este é o sistema real (Node.js + MySQL). O projeto
 > em `C:\Producao\Gerenciador REPs\opencode` (.NET) é um esqueleto incompleto e
@@ -121,8 +137,14 @@ Ambos usam registro tipo `3`. A linha tipo `3` tem 9 caracteres de NSR + 1 de ti
 A **detecção definitiva** é via `get_afd?mode=671`: se a primeira batida tiver
 `-` na posição 14 → 671; se der erro ou voltar layout clássico → 1510.
 
-> Firmware: `versionFW` da API é **decimal**; o display mostra **hex**
-> (`1048` = `0x418` = "418"; `versionMRP 1560` = `0x618` = MRP 618).
+> O iDFace chama o layout PIS de **595**. O conteúdo é o mesmo do 1510 (PIS,
+> data `DDMMAAAA`); o iZCloud trata 595 como alias de 1510 no parser e na
+> exportação. No iDFace, o AFD é gerado por `export_afd.fcgi` (sem `mode` para
+> 595, com `&mode=671` para CPF).
+
+> Firmware: a API devolve **1048 decimal**; o display do REP mostra **418**
+> (`0x418`). O `versionMRP 1560` decimal = `0x618` = "618". O iZCloud exibe
+> **418** como versão principal (o decimal fica como `0x418`).
 > Firmware 671 começa em 1000+, mas a detecção por AFD é infalível.
 
 ---
@@ -170,7 +192,8 @@ O que acontece depois foi medido no REP real, não deduzido:
 REP abre TCP na 443 (porta fixa no firmware) e faz TLS 1.2
 REP não envia nada — espera o servidor falar
 servidor -> POST /login.fcgi  -> {session}
-servidor -> POST /get_about.fcgi, /get_afd.fcgi, /load_users.fcgi, ...
+servidor -> POST /get_about.fcgi {session}  (v1048 exige sessão)
+servidor -> POST /get_afd.fcgi, /load_users.fcgi, /load_company.fcgi, ...
 REP responde JSON
 ```
 
@@ -213,15 +236,20 @@ Arquivos de apoio: `docker-compose.yml` (MySQL + Node), `.env.example`.
 |---|---|
 | `repClient.js` | Cliente FCGI dos REPs (login, probe, add_users, get_afd, detecção 1510/671) |
 | `idcloudServer.js` | **Servidor do canal iDCloud**: TLS 443, trava de série, coleta do AFD |
-| `idcloud.js` | Cliente do schema do cliente (ler/gravar `afd`, `pessoas`, `equipamentos`, `sync_status`) |
+| `idcloud.js` | Cliente do schema do cliente (ler/gravar `afd`, `pessoas`, `equipamentos`, `sync_status`, `empregadores`, `templates`) |
+| `importarRep.js` | Lê empresa/funcionários/biometria que já estão na memória do REP e grava no tenant |
 | `afd.js` | Parser 1510/671 + `gerarPorPeriodo` (gera AFD reimportável) |
-| `sync.js` | `sincronizarAfd` (incremental NSR) + `iniciarPoller` (silencioso, itera tenants) |
+| `afdStore.js` | Guarda o AFD bruto em `data/afd/<schema>/` + metadados (`afd_arquivos`) |
+| `idface.js` | Coletor iDFace: token, fila de push, `/push`/`/result`, parser AFD/`access_logs`, marcações e vínculos |
+| `sync.js` | `sincronizarAfd` (incremental NSR), `coletarAfdRep` (completo/NSR/data) + `iniciarPoller` |
 | `core.js` | Núcleo multi-tenant: pools, clientes, contas, migrations, coletas |
 | `auth.js` | Login JWT + middleware `authTenant` (Bearer ou Basic+`X-Client-DB`) |
-| `server.js` | API Express multi-tenant (`/api/auth/*`, `/api/reps`, `/api/pessoas`, `/api/afd/*`, `/push`) |
+| `server.js` | API Express multi-tenant (`/api/auth/*`, `/api/reps`, `/api/pessoas`, `/api/afd/*`, `/api/idface/*`, `/push`) |
 | `schema_core.sql` | Banco `izcloud_core` (contas, clientes, auditoria, capturas) |
 | `schema_tenant.sql` | Tabelas de UM cliente (executado dentro de `tenant_XXXX`) |
 | `descobre_porta.mjs`, `captura_rep.mjs` | Diagnóstico do canal contra o REP real |
+| `test_idface.mjs`, `test_idface_push.mjs`, `test_idface_dump.mjs` | Diagnóstico iDFace (leitura, captura de push e dump para comparar RHiD), ver `docs/IDFACE.md` |
+| `test_rep_afd.mjs` | Diagnóstico do REP real: firmware, AFD com/sem limit, empresa e usuários |
 
 ---
 
@@ -477,6 +505,8 @@ Passos (resumo):
   ALTER TABLE clientes
     ADD COLUMN id_conta INT,
     ADD COLUMN razao_social VARCHAR(160),
+    ADD COLUMN tipo_documento ENUM('CNPJ','CPF') DEFAULT 'CNPJ',
+    ADD COLUMN cei VARCHAR(20),
     ADD COLUMN endereco VARCHAR(200),
     ADD COLUMN responsavel_nome VARCHAR(120),
     ADD COLUMN responsavel_cpf VARCHAR(20);
@@ -514,8 +544,8 @@ para REPs ControlID 1510/671, multi-empresa, com biometria.
 - **Isolamento em 3 níveis:**
   1. `contas` (tabela `izcloud_core`) = login do **cliente** do iZCloud. Cada conta só enxerga as suas empresas.
   2. `clientes` (tabela `izcloud_core`) = **EMPRESA** (tenant). Ganha `id_conta`,
-     perfil completo (`razao_social`, `cnpj`, `endereco`, `responsavel_nome`,
-     `responsavel_cpf`) e `login`/`senha_hash` para **API externa** (Secullum).
+     perfil completo (`razao_social`, `tipo_documento`, `cnpj`, `cei`, `endereco`,
+     `responsavel_nome`, `responsavel_cpf`) e `login`/`senha_hash` para **API externa** (Secullum).
      Cada empresa = 1 schema `tenant_XXXX`.
   3. Dentro do schema da empresa: `equipamentos` (REPs), `pessoas` (funcionários),
      `equip_pessoa` (vínculo REP×funcionário), `afd`, `templates` (biometria),
@@ -529,7 +559,11 @@ para REPs ControlID 1510/671, multi-empresa, com biometria.
 #### Tabelas — `izcloud_core`
 - `contas(id_conta, login UNIQUE, senha_hash, nome, ativo)`
 - `clientes(id_cliente, id_conta, login UNIQUE, senha_hash, schema_name, razao_social,
-  nome_empresa, cnpj, endereco, responsavel_nome, responsavel_cpf, ativo)`
+  nome_empresa, tipo_documento, cnpj, cei, endereco, responsavel_nome, responsavel_cpf, ativo)`
+  - `tipo_documento` = `CNPJ` ou `CPF` (empregador pessoa jurídica ou física);
+  - `cnpj` guarda o documento (CNPJ ou CPF, conforme o tipo);
+  - `cei` = cadastro do INSS (opcional);
+  - `responsavel_nome`/`responsavel_cpf` = responsável da empresa.
 - `usuarios(id_usuario, id_cliente, schema_name, login UNIQUE, senha_hash, nome, nivel, ativo)`
 
 #### Tabelas — schema da empresa (`tenant_XXXX`)
@@ -552,6 +586,7 @@ para REPs ControlID 1510/671, multi-empresa, com biometria.
 | GET | `/api/reps` | empresa (`X-Empresa`) | lista REPs |
 | POST | `/api/reps` | empresa | cadastra REP |
 | POST | `/api/reps/probe` | empresa | auto-detecta 1510/671 |
+| POST | `/api/reps/:id/importar` | empresa | lê empresa + funcionários + biometria do REP |
 | GET/PUT | `/api/reps/:id/funcionarios` | empresa | subset de funcionários do REP |
 | GET | `/api/pessoas` | empresa | lista funcionários |
 | POST | `/api/pessoas` | empresa | envia 1 funcionário ao REP |
@@ -567,8 +602,9 @@ para REPs ControlID 1510/671, multi-empresa, com biometria.
 
 #### UI (`public/index.html`, SPA vanilla, sem build)
 - Login split-screen com **criar conta**.
-- Topo: seletor de **empresa** (se >1) + **cartão de perfil** (razão social, CNPJ,
-  endereço, responsável) + modal de cadastro/edição de empresa.
+- Topo: seletor de **empresa** (se >1) + **cartão de perfil** (razão social,
+  CNPJ/CPF, CEI, endereço, responsável e CPF do responsável) + modal de
+  cadastro/edição de empresa.
 - Abas: **REPs** (sondar/cadastrar/listar), **Funcionários** (vínculo REP×pessoa +
   Sincronização com o REP: importar/enhar biometria + coluna Bio), **AFD**
   (sincronizar/exportar), **Usuários** (operadores).
@@ -582,6 +618,8 @@ CREATE TABLE contas ( id_conta INT AUTO_INCREMENT PRIMARY KEY, login VARCHAR(64)
 ALTER TABLE clientes
   ADD COLUMN id_conta INT,
   ADD COLUMN razao_social VARCHAR(160),
+  ADD COLUMN tipo_documento ENUM('CNPJ','CPF') DEFAULT 'CNPJ',
+  ADD COLUMN cei VARCHAR(20),
   ADD COLUMN endereco VARCHAR(200),
   ADD COLUMN responsavel_nome VARCHAR(120),
   ADD COLUMN responsavel_cpf VARCHAR(20);
@@ -1303,5 +1341,111 @@ e ela **não depende de rede pública**: rodando o iZCloud na mesma LAN do REP,
 - Backend de pé na Railway; `/api/health/db` → `{"ok":true,"tabela_contas":true}`.
 - **Continua pendente o passo P0:** criar a conta do primeiro cliente e fazer o
   primeiro login (nunca foi feito — ver §12.12.1).
+
+---
+
+## 15. Sessão 04/11/2026 — correções P0 (painel + canal iDCloud)
+
+Diagnóstico completo e correções dos bloqueios que apareceram no teste em
+produção. Nada foi deployado nesta sessão; os commits ainda precisam ir ao
+`main` para a Railway aplicar.
+
+### 15.1 O que foi corrigido
+
+| Onde | Problema | Correção |
+|---|---|---|
+| `server.js` | `/api/painel` e `/api/coletas` sem `authTenant` → **502** em produção | middleware aplicado nas duas rotas |
+| `server.js` | `IDCLOUD_HOST` (MySQL) era reutilizado como bind do TLS | novo `IDCLOUD_BIND` (default `0.0.0.0`) |
+| `server.js` | canal exigia arquivo de cert no disco | aceita `IDCLOUD_CERT_PEM`/`IDCLOUD_KEY_PEM` (Railway sem volume) |
+| `idcloudServer.js` | `ctx.schema = nSerie` → gravava num banco com nome de serial | usa o schema da vaga/reserva |
+| `idcloudServer.js` | vaga não guardava serial/tenant e não casava o `nSerie` | vaga carrega `schema`, `serial` e `passcode`; match por serial |
+| `idcloudServer.js` | `COMANDOS` era allowlist morta | `pedir()` recusa comando fora da lista |
+| `idcloudServer.js` | coleta só acontecia com reserva manual | auto-aceite por serial cadastrado (`IDCLOUD_AUTOACEITE`, default `true`) |
+| `core.js` | `rep_coletas.id_reps INT` → serial de 17 dígitos estoura | `BIGINT` + migração automática no boot |
+| `core.js` | `INSERT` de `rep_coletas` com 6 colunas e 7 valores | SQL corrigido |
+| `idcloudServer.js` | `get_afd` sempre com `limit: 1000` | padrão **sem `limit`**; `IDCLOUD_AFD_LIMIT` para voltar atrás |
+| `idcloud.js` | gravação do AFD linha a linha | lote de 500 + `desdeNsr` (só o que avançou) |
+| `server.js` / UI | funcionário só era salvo se o REP respondesse | salva na nuvem primeiro; envio ao REP é opcional/best-effort |
+| UI | cadastro de REP exigia Sondar | serial pode ser digitado manualmente (REP atrás de NAT) |
+| `Dockerfile`/compose | não expunham 443 / não configuravam o canal | 443 exposta + envs do canal |
+
+### 15.2 AFD completo — validado no REP real (04/11/2026)
+
+O canal mandava `limit: 1000`; com isso o REP devolvia **1.001 linhas**. Sem
+`limit`, o mesmo REP devolveu **38.543 linhas / 37.925 batidas / 1,5 MB**
+(na primeira medição; o arquivo cresce com o uso — a segunda já mostrou 38.545
+linhas). `limit` acima de 1000 responde HTTP 400. Portanto o truncamento era do
+nosso cliente, não do aparelho. `IDCLOUD_AFD_LIMIT=1000` volta ao comportamento
+antigo se algum firmware rejeitar a chamada sem `limit`.
+
+### 15.2.1 Importação da empresa e dos funcionários que já estão no REP
+
+Validado no REP real: `load_company` devolve nome/endereço/CPF-CNPJ e
+`load_users` (com `limit`/`offset`, máximo 100, e `templates: true`) devolve os
+funcionários + biometria base64. O fluxo novo é:
+
+1. cadastrar o REP pelo serial (pode ser digitado manualmente);
+2. clicar em **Importar** na lista de REPs (ou “Importar empresa e funcionários
+   do REP” na aba Funcionários);
+3. o sistema lê empresa, funcionários, vínculos e biometria do aparelho;
+4. novos funcionários podem ser cadastrados na nuvem e enviados ao REP depois.
+
+> No canal iDCloud a importação inicial também roda sozinha no **primeiro
+> contato**, se a empresa ainda não tem funcionários
+> (`IDCLOUD_IMPORTAR_AUTOMATICO=true`). Para reimportar depois, use o botão
+> **Importar** na lista de REPs.
+>
+> **Envio validado no REP real:** `add_users` com nome/matrícula/código/senha →
+> `load_users` confirmou os campos → `remove_users` limpou o teste. Cadastrar na
+> nuvem e enviar ao REP a qualquer momento funciona.
+>
+> Neste firmware `get_about` **exige sessão**: o canal faz `login` antes de
+> `get_about`. A versão anterior chamava `get_about` sem sessão e recebia 401.
+
+### 15.2.2 iDFace como coletor de ponto (o que já funciona)
+
+O iDFace não guarda o empregador na memória (`load_company` não existe nele),
+mas gera AFD nos dois formatos (antigo/PIS e novo/CPF). Hoje o iZCloud cobre
+esse caso assim:
+
+- A **empresa é cadastrada manualmente** no iZCloud (agora com CNPJ **ou CPF**,
+  CEI e responsável).
+- O iDFace é cadastrado como equipamento informando o serial e o tipo de
+  portaria (`1510` = PIS, `671` = CPF).
+- O AFD gerado pelo iDFace pode ser **importado pela aba AFD** (arquivo), tanto
+  no layout antigo quanto no novo. O parser detecta o formato pela linha tipo 3.
+- O AFD importado entra em `afd`, pode ser exportado por período e aparece no
+  painel.
+
+O que **não** existe ainda: coleta automática do iDFace pela API de acesso
+(Push/Monitor/`report_generate`). Isso é um adaptador separado da linha iDClass.
+Para o iDFace, o fluxo atual é manual (exportar o AFD no aparelho e importar no
+iZCloud) ou usar o `POST /api/afd/import`.
+
+> **Atualização 05/11/2026 — coleta automática implementada:** o iZCloud agora
+> tem o push server oficial do iDFace (`/api/idface/<schema>/<token>/push` e
+> `/result`), fila de comandos, `idface_marcacoes`, `idface_usuarios`,
+> `idface_vinculos` e download do AFD bruto (`/api/idface/arquivos`). O iDClass
+> ganhou `POST /api/afd/coletar` (completo/NSR/data) e
+> `/api/afd/arquivos/:id/download`. Ver [`docs/IDFACE.md`](docs/IDFACE.md) §8.
+
+> **Limite importante (medido no RHiD em 05/11/2026):** o AFD do iDFace é só do
+> coletor. Ele usa `users.id` nos dois layouts, não tem empregador, empregados,
+> tipo 7 nem assinatura. **Não tem valor legal.** O RHiD gera os fiscais na
+> nuvem — AFD 671 v004 (tipo 5 + tipo 7, CPF), AEJ 671 (CPF), AFDT/ACJEF 1510
+> (PIS) — e troca o `users.id` do equipamento para o PIS. O iZCloud deve seguir o
+> mesmo desenho: coletar as marcações, versionar o vínculo `device_user_id` ↔
+> funcionário e gerar os arquivos fiscais na nuvem (ou entregá-los a um REP-P
+> certificado). Detalhes, riscos e o passo a passo em
+> [`docs/RHID-COMPARATIVO.md`](docs/RHID-COMPARATIVO.md).
+
+### 15.3 O que ainda depende de infraestrutura
+
+- **IP público fixo com TCP 443** para o REP. A Railway não serve direto (o REP
+  não manda SNI/Host). Caminho recomendado: VPS barata como relay **L4** para um
+  Railway TCP Proxy, mantendo app/MySQL na Railway. Ver `docs/IP-FIXO.md`.
+- Reserva manual (`POST /api/reps/:id/reservar-coleta`) continua existindo para
+  aparelhos ainda não cadastrados.
+- Testes: `npm test` (novo, sem MySQL/REP) + as suítes `.tmp-*` existentes.
 
 

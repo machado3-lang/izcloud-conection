@@ -6,12 +6,15 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { probe, enviarUsuarios, lerUsuarios, mapearUsuario } from './repClient.js';
+import { probe, enviarUsuarios } from './repClient.js';
+import { importarDoRep } from './importarRep.js';
 import { IdCloudClient } from './idcloud.js';
 import { gerarPorPeriodo } from './afd.js';
-import { sincronizarAfd, iniciarPoller } from './sync.js';
+import { sincronizarAfd, coletarAfdRep, iniciarPoller } from './sync.js';
+import { salvarArquivoAfd, listarArquivos, lerArquivoAfd } from './afdStore.js';
+import * as idface from './idface.js';
 import { getCorePool, getTenantPool, verificarConexaoCore, inicializarCore, criarCliente, listarClientes, criarUsuario, listarUsuarios, removerUsuario, criarConta, verificarConta, buscarConta, existeAdmin, listarEmpresas, criarEmpresa, atualizarEmpresa, listarContas, atualizarConta, resetarSenhaConta, listarTodasEmpresas, atualizarEmpresaAdmin, auditar, listarAuditoria, aplicarMigracoesTenant, gerarCredencialRep, listarCapturasRep, limparCapturasRep,
-  estadoColetaRep, listarColetasRep } from './core.js';
+  estadoColetaRep, listarColetasRep, migrarTenantsExistentes } from './core.js';
 import { login, authTenant, authConta, authAdmin, adminKey, requireAdmin, requireTenantAdmin, limiteTentativas, registrarFalha, limparFalhas, validarLogin, validarSenha } from './auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -336,7 +339,7 @@ app.post('/api/admin/bootstrap', adminKey, async (req, res) => {
 // =====================================================================
 app.use('/api/admin', authAdmin);
 
-const CAMPOS_EMPRESA = ['razao_social', 'nome_empresa', 'cnpj', 'endereco', 'responsavel_nome', 'responsavel_cpf'];
+const CAMPOS_EMPRESA = ['razao_social', 'nome_empresa', 'tipo_documento', 'cnpj', 'cei', 'endereco', 'responsavel_nome', 'responsavel_cpf'];
 function camposEmpresa(body) {
   const out = {};
   for (const k of CAMPOS_EMPRESA) if (body[k] !== undefined) out[k] = body[k];
@@ -510,10 +513,111 @@ app.delete('/api/auth/usuarios/:id', async (req, res) => {
   } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
+// ---------- iDFace: push publico (o equipamento so manda deviceId/uuid) ----------
+// O token vai no path. A URL configurada no iDFace e' a BASE; o firmware
+// acrescenta `/push` e `/result`. Recomendado: /api/idface/<schema>/<token>.
+// Tambem aceitamos /api/idface/<token> (varre os tenants, com cache curto).
+const _cacheTokenPush = new Map();
+
+async function buscarDispositivoPorToken(token) {
+  const agora = Date.now();
+  const cache = _cacheTokenPush.get(token);
+  if (cache && cache.ate > agora) return cache.valor;
+  let achado = null;
+  try {
+    const core = getCorePool();
+    const [clientes] = await core.query('SELECT schema_name FROM clientes WHERE ativo = 1');
+    for (const c of clientes) {
+      const pool = getTenantPool(c.schema_name);
+      const d = await idface.buscarPorToken(pool, token);
+      if (d) { achado = { schema: c.schema_name, pool, dispositivo: d }; break; }
+    }
+  } catch { /* banco fora: o push responde 401 e o aparelho tenta de novo */ }
+  _cacheTokenPush.set(token, { ate: agora + 60000, valor: achado });
+  return achado;
+}
+
+async function resolverDispositivoPush(req) {
+  const { schema, token } = req.params;
+  if (schema && /^tenant_\d{1,10}$/.test(schema)) {
+    try {
+      const pool = getTenantPool(schema);
+      const d = await idface.buscarPorToken(pool, token);
+      if (d) return { schema, pool, dispositivo: d };
+    } catch { /* cai no fallback */ }
+  }
+  return buscarDispositivoPorToken(token);
+}
+
+app.get(['/api/idface/:schema/:token/push', '/api/idface/:token/push'], async (req, res) => {
+  try {
+    const alvo = await resolverDispositivoPush(req);
+    if (!alvo) return res.status(401).json({ error: 'token invalido' });
+    const { pool, dispositivo } = alvo;
+
+    // deviceId e' estavel e pode ser gravado no primeiro poll. Se ja existe e
+    // nao confere, recusa: evita um token vazado ser usado por outro aparelho.
+    const deviceId = req.query.deviceId ? Number(req.query.deviceId) : null;
+    if (dispositivo.device_id && deviceId && Number(dispositivo.device_id) !== deviceId) {
+      return res.status(403).json({ error: 'deviceId nao confere com o token' });
+    }
+    if (!dispositivo.device_id && deviceId) {
+      await pool.query('UPDATE idface_dispositivos SET device_id = ? WHERE id = ?', [deviceId, dispositivo.id]);
+    }
+
+    await idface.registrarPoll(pool, dispositivo, req.query.uuid);
+    const cmd = await idface.proximoComando(pool, dispositivo.id);
+    if (!cmd) return res.json({ transactions: [] });
+    return res.json(idface.montarComando(cmd));
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+app.post(['/api/idface/:schema/:token/result', '/api/idface/:token/result'], async (req, res) => {
+  try {
+    const alvo = await resolverDispositivoPush(req);
+    if (!alvo) return res.status(401).json({ error: 'token invalido' });
+    const { schema, pool, dispositivo } = alvo;
+
+    const endpoint = req.query.endpoint || req.body?.endpoint || '';
+    const uuid = req.query.uuid || null;
+    const itens = Array.isArray(req.body?.transactions_results)
+      ? req.body.transactions_results : [req.body || {}];
+
+    const resultados = [];
+    for (const item of itens) {
+      const ep = item.endpoint || endpoint || null;
+      const erro = item.error || item.erro || null;
+      const response = item.response ?? item.result ?? null;
+
+      const comando = await idface.concluirComando(pool, dispositivo.id, ep, erro);
+      // Alguns firmwares nao repetem o endpoint no /result: nesse caso usamos o
+      // endpoint do comando que estava entregue.
+      const epEfetivo = ep || comando?.endpoint || '';
+      await idface.registrarResultado(pool, {
+        idDispositivo: dispositivo.id, endpoint: epEfetivo, uuid, response, erro,
+      });
+      resultados.push(await idface.processarResultado(pool, {
+        schema, dispositivo, comando, endpoint: epEfetivo, response, erro,
+        salvarArquivo: (dados) => salvarArquivoAfd(pool, dados),
+      }));
+    }
+    return res.json({ ok: true, resultados });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
 // Todas as rotas abaixo exigem autenticacao e sao ESCOPADAS ao tenant do cliente.
+// /api/painel e /api/coletas tinham ficado de fora: sem o middleware, req.db e
+// req.tenant chegavam undefined e as duas rotas respondiam 502 em producao.
 app.use('/api/reps', authTenant);
 app.use('/api/pessoas', authTenant);
 app.use('/api/afd', authTenant);
+app.use('/api/idface', authTenant);
+app.use('/api/painel', authTenant);
+app.use('/api/coletas', authTenant);
 
 // ---------- Coleta pelo canal iDCloud ----------
 // A UI reserva a vaga do REP; quando o aparelho conecta na 443 da VPS, o
@@ -521,10 +625,27 @@ app.use('/api/afd', authTenant);
 app.post('/api/reps/:id/reservar-coleta', async (req, res) => {
   try {
     const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) throw new Error('REP invalido');
+    // O canal iDCloud precisa saber A QUAL empresa o REP pertence e qual e' o
+    // serial dele. A vaga antiga so guardava o id: a coleta acabava tentando
+    // gravar num banco chamado pelo serial. Agora a vaga carrega o tenant.
+    const [rows] = await req.db.query(
+      'SELECT id_Equipamento, COALESCE(Serial, CAST(id_Equipamento AS CHAR)) AS Serial, Passcode ' +
+      'FROM equipamentos WHERE id_Equipamento = ?', [id]
+    );
+    if (!rows.length) throw new Error('REP nao encontrado nesta empresa');
     const min = Math.min(Math.max(Number(req.body?.minutos) || 30, 1), 240);
     const { reservarVaga } = await import('./idcloudServer.js');
-    res.json({ ok: true, id_reps: id, reservado_ate: new Date(reservarVaga(id, min)).toISOString() });
-  } catch (e) { res.status(502).json({ error: e.message }); }
+    const ate = reservarVaga(id, min, {
+      schema: req.tenant.schema,
+      serial: rows[0].Serial,
+      passcode: rows[0].Passcode,
+    });
+    res.json({
+      ok: true, id_reps: id, serial: rows[0].Serial, schema: req.tenant.schema,
+      reservado_ate: new Date(ate).toISOString(),
+    });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 app.get('/api/reps/:id/coleta', async (req, res) => {
@@ -570,6 +691,56 @@ app.post('/api/reps', async (req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+// Le empresa + funcionarios + biometria que JA ESTAO na memoria do REP e
+// grava no tenant. E' o fluxo "ligou o REP, nao precisa cadastrar de novo".
+// Usa o IP/porta/Passcode ja salvos no equipamento (nao precisa redigitar).
+app.post('/api/reps/:id/importar', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) throw new Error('REP invalido');
+    const [rows] = await req.db.query(
+      'SELECT id_Equipamento, IpAddress, Porta, Passcode FROM equipamentos WHERE id_Equipamento = ?', [id]
+    );
+    if (!rows.length) throw new Error('REP nao encontrado nesta empresa');
+    const r = rows[0];
+    if (!r.IpAddress) throw new Error('REP sem IP cadastrado');
+    const client = new IdCloudClient(req.db);
+    const out = await importarDoRep({
+      client,
+      idEquipamento: id,
+      ip: r.IpAddress,
+      porta: r.Porta || 443,
+      usuario: 'admin',
+      senha: r.Passcode || process.env.REP_ADMIN_SENHA || 'admin',
+    });
+    // Preenche o perfil da empresa apenas se estiver vazio: o cliente pode ter
+    // um nome/CNPJ comercial diferente do empregador gravado no REP.
+    if (out.empresa) {
+      try {
+        // Tipo (CNPJ/CPF) so acompanha o documento se ele ainda estiver vazio.
+        await getCorePool().query(
+          `UPDATE clientes SET tipo_documento = ?
+             WHERE id_cliente = ? AND (cnpj IS NULL OR cnpj = '')`,
+          [out.empresa.tipo_documento || 'CNPJ', req.tenant.empresa_id]
+        );
+        await getCorePool().query(
+          `UPDATE clientes SET
+             razao_social = COALESCE(NULLIF(razao_social, ''), ?),
+             cnpj = COALESCE(NULLIF(cnpj, ''), ?),
+             cei = COALESCE(NULLIF(cei, ''), ?),
+             endereco = COALESCE(NULLIF(endereco, ''), ?)
+           WHERE id_cliente = ?`,
+          [out.empresa.RazaoSocial, out.empresa.CNPJ_CPF, out.empresa.CEI, out.empresa.Local, req.tenant.empresa_id]
+        );
+      } catch (e) {
+        // Perfil e' cosmetico: a importacao do tenant ja deu certo.
+        console.error('[importar] perfil da empresa nao atualizado:', e.message);
+      }
+    }
+    res.json({ ok: true, idEquipamento: id, ...out });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
 app.get('/api/reps', async (req, res) => {
   try { res.json(await new IdCloudClient(req.db).listarEquipamentos()); }
   catch (e) { res.status(502).json({ error: e.message }); }
@@ -613,29 +784,44 @@ app.get('/api/painel', async (req, res) => {
   catch (e) { res.status(502).json({ error: e.message }); }
 });
 
-// Importar usuarios + biometria DA memoria do REP para o iZCloud (e vincula ao REP)
+// Importar empresa + funcionarios + biometria da memoria do REP para o iZCloud.
+// Esta rota e' a versao "explicita" (recebe IP/senha no corpo). A UI usa
+// /api/reps/:id/importar, que reaproveita o cadastro do equipamento.
 app.post('/api/pessoas/importar', async (req, res) => {
   try {
     const { rep, idEquipamento } = req.body;
-    const lista = await lerUsuarios(rep.ip, rep.porta || 443, rep.usuario || 'admin', rep.senha || 'admin');
+    if (!rep?.ip) throw new Error('Informe o IP do REP');
+    if (!idEquipamento) throw new Error('Informe o id do equipamento');
     const client = new IdCloudClient(req.db);
-    let pessoas = 0, templates = 0;
-    for (const u of lista) {
-      const m = mapearUsuario(u);
-      const idP = await client.importarPessoa({ pis: m.pis, cpf: m.cpf, nome: m.nome, portaria: m.tipo });
-      await client.vincularEquipamento(idP, idEquipamento);
-      for (const t of m.templates) { await client.gravarTemplate(idP, t.tipo, t.indice, t.dados); templates++; }
-      pessoas++;
-    }
-    res.json({ ok: true, pessoas, templates });
+    const out = await importarDoRep({
+      client, idEquipamento: Number(idEquipamento),
+      ip: rep.ip, porta: rep.porta || 443,
+      usuario: rep.usuario || 'admin',
+      senha: rep.senha || process.env.REP_ADMIN_SENHA || 'admin',
+    });
+    res.json({ ok: true, ...out });
   } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
 // Enviar ao REP apenas os funcionarios VINCULADOS a ele (filtrado por equip_pessoa) + biometria
 app.post('/api/pessoas/sincronizar', async (req, res) => {
   try {
-    const { rep, idEquipamento } = req.body;
+    const { rep = {}, idEquipamento } = req.body;
     const client = new IdCloudClient(req.db);
+    // O IP/senha podem vir no corpo (API) ou ser lidos do equipamento ja
+    // cadastrado (UI). A UI nao precisa redigitar a conexao a cada envio.
+    let ip = rep.ip, porta = rep.porta, usuario = rep.usuario, senha = rep.senha;
+    if ((!ip || !porta) && idEquipamento) {
+      const [eq] = await client.pool.query(
+        'SELECT IpAddress, Porta, Passcode FROM equipamentos WHERE id_Equipamento = ?', [idEquipamento]
+      );
+      if (eq.length) {
+        ip = ip || eq[0].IpAddress;
+        porta = porta || eq[0].Porta;
+        senha = senha || eq[0].Passcode;
+      }
+    }
+    if (!ip) throw new Error('REP sem IP cadastrado');
     const [vin] = await client.pool.query('SELECT id_Pessoa FROM equip_pessoa WHERE id_Equipamento = ?', [idEquipamento]);
     const users = [];
     for (const { id_Pessoa } of vin) {
@@ -653,18 +839,54 @@ app.post('/api/pessoas/sincronizar', async (req, res) => {
       users.push(u);
     }
     const portaria = users.some(u => u.cpf) ? '671' : '1510';
-    const r = await enviarUsuarios(rep.ip, rep.porta || 443, users, portaria, rep.usuario || 'admin', rep.senha || 'admin');
+    const r = await enviarUsuarios(ip, porta || 443, users, portaria,
+      usuario || 'admin', senha || process.env.REP_ADMIN_SENHA || 'admin');
     res.json({ ok: true, enviados: users.length, rep: r });
   } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
+// Cadastro do funcionario. A gravacao na nuvem vem PRIMEIRO: a nuvem nao pode
+// depender de alcancar o REP para aceitar um cadastro (o REP do cliente costuma
+// estar atras de NAT). O envio ao REP, quando pedido, e' uma segunda etapa.
 app.post('/api/pessoas', async (req, res) => {
   try {
-    const { rep, pessoa } = req.body;
-    const r = await enviarUsuarios(rep.ip, rep.porta, [pessoa], rep.portaria, rep.usuario, rep.senha);
-    const id = await new IdCloudClient(req.db).gravarPessoa({ ...pessoa, portaria: rep.portaria });
-    res.json({ rep: r, idNuvem: id });
-  } catch (e) { res.status(502).json({ error: e.message }); }
+    const { rep = {}, pessoa, idEquipamento } = req.body;
+    if (!pessoa) throw new Error('Informe os dados do funcionario');
+    const client = new IdCloudClient(req.db);
+
+    // Conexao: pode vir no corpo (API) ou ser lida do equipamento cadastrado.
+    // A UI manda so o idEquipamento; o IP/porta/Passcode ja estao no REP.
+    let ip = rep.ip, porta = rep.porta, usuario = rep.usuario, senha = rep.senha;
+    let tipoRep = rep.portaria || null;
+    if ((!ip || !porta) && idEquipamento) {
+      const [eq] = await client.pool.query(
+        'SELECT IpAddress, Porta, Passcode, REPType FROM equipamentos WHERE id_Equipamento = ?', [idEquipamento]
+      );
+      if (eq.length) {
+        ip = ip || eq[0].IpAddress;
+        porta = porta || eq[0].Porta;
+        senha = senha || eq[0].Passcode;
+        tipoRep = tipoRep || eq[0].REPType || null;
+      }
+    }
+
+    const portaria = tipoRep || (pessoa.cpf ? '671' : '1510');
+    const id = await client.gravarPessoa({ ...pessoa, portaria });
+    if (idEquipamento) await client.vincularEquipamento(id, Number(idEquipamento));
+
+    let enviado = null, erroEnvio = null;
+    if (ip) {
+      try {
+        enviado = await enviarUsuarios(ip, porta || 443, [pessoa], portaria,
+          usuario || 'admin', senha || process.env.REP_ADMIN_SENHA || 'admin');
+      } catch (e) {
+        // O cadastro ja esta salvo. Devolver erro aqui faria o operador tentar
+        // de novo e duplicar; a UI avisa que o envio ficou pendente.
+        erroEnvio = e.message;
+      }
+    }
+    res.json({ idNuvem: id, enviado: !!enviado, erroEnvio, rep: enviado });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 // ---------- AFD (escopo do tenant) ----------
@@ -700,11 +922,12 @@ app.post('/api/afd/export', async (req, res) => {
     const { idEquipamento, dataInicio, dataFim, serial, formato } = req.body;
     const client = new IdCloudClient(req.db);
     const rows = await client.lerAfd({ idEquipamento, dataInicio, dataFim });
+    const empregador = await empregadorDoTenant(req, idEquipamento);
     const { texto, total } = gerarPorPeriodo({
       linhasCruas: rows.map(r => r.Dado).filter(Boolean),
-      serial, dataInicio, dataFim, formato,
+      serial, dataInicio, dataFim, formato, empregador,
     });
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Type', 'text/plain; charset=iso-8859-1');
     res.setHeader('Content-Disposition', `attachment; filename="AFD_${idEquipamento}_${dataInicio || ''}_${dataFim || ''}.txt"`);
     res.send(texto);
   } catch (e) { res.status(502).json({ error: e.message }); }
@@ -720,7 +943,11 @@ app.post('/api/afd/fetch', async (req, res) => {
       idEquipamento, mode: mode || rep.portaria, client,
     });
     const rows = await client.lerAfd({ idEquipamento });
-    const { texto } = gerarPorPeriodo({ linhasCruas: rows.map(r => r.Dado).filter(Boolean), serial: rep.serial, formato: mode });
+    const empregador = await empregadorDoTenant(req, idEquipamento);
+    const { texto } = gerarPorPeriodo({
+      linhasCruas: rows.map(r => r.Dado).filter(Boolean),
+      serial: rep.serial, formato: mode, empregador,
+    });
     res.json({ sincronizados: sync.inseridos, afd: texto });
   } catch (e) { res.status(502).json({ error: e.message }); }
 });
@@ -732,10 +959,314 @@ app.post('/api/afd/import', async (req, res) => {
     const client = new IdCloudClient(req.db);
     const linhas = String(texto || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     await client.salvarAfd(idEquipamento, linhas);
-    const arquivo = path.join(AFD_DIR, req.tenant.schema, `import_${Date.now()}.txt`);
-    fs.mkdirSync(path.dirname(arquivo), { recursive: true });
-    fs.writeFileSync(arquivo, linhas.join('\r\n'), 'utf-8');
+    const [reps] = await req.db.query(
+      'SELECT Serial, REPType FROM equipamentos WHERE id_Equipamento = ?', [Number(idEquipamento)]
+    );
+    const rep = reps[0] || {};
+    const arquivo = await salvarArquivoAfd(req.db, {
+      schema: req.tenant.schema,
+      origem: 'import',
+      formato: rep.REPType === '671' ? '671' : '595',
+      serial: rep.Serial,
+      idEquipamento: Number(idEquipamento),
+      texto: linhas.join('\r\n'),
+    });
     res.json({ total: linhas.length, arquivo });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// ---------- iDClass: coleta/provedor de AFD bruto ----------
+// O REP-C gera o AFD; o iZCloud so coleta e guarda. "completo", "por NSR" e
+// "por data" sao filtros passados ao proprio REP (get_afd), garantindo header,
+// trailer e CRC originais. O arquivo fica em data/afd/<schema>/ e pode ser
+// baixado por qualquer sistema externo autenticado (Basic + X-Client-DB).
+function basePublica(req) {
+  return (process.env.IZCLOUD_PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+}
+
+function dataParaApi(v) {
+  const m = String(v || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? { year: Number(m[1]), month: Number(m[2]), day: Number(m[3]) } : null;
+}
+
+// Empregador para o header do AFD 1510: prioriza o que o REP tem em memoria
+// (`empregadores`); se o REP ainda nao tem, usa o perfil da empresa no core.
+// Assim o "cadastrar empregador" do iZCloud aparece no AFD gerado.
+async function empregadorDoTenant(req, idEquipamento) {
+  try {
+    const [emps] = await req.db.query(
+      `SELECT e.* FROM empregadores e
+         JOIN equipamentos q ON q.id_Empregador = e.id_Empregador
+        WHERE q.id_Equipamento = ? LIMIT 1`, [Number(idEquipamento)]
+    );
+    if (emps.length) return emps[0];
+  } catch { /* tenant antigo sem empregadores */ }
+  if (!req.tenant?.empresa_id) return null;
+  try {
+    const [cs] = await getCorePool().query(
+      `SELECT razao_social, nome_empresa, cnpj, tipo_documento, cei
+         FROM clientes WHERE id_cliente = ?`, [req.tenant.empresa_id]
+    );
+    const c = cs[0];
+    if (!c) return null;
+    return {
+      RazaoSocial: c.razao_social || c.nome_empresa,
+      CNPJ_CPF: c.cnpj,
+      CEI: c.cei,
+      tipo_documento: c.tipo_documento,
+    };
+  } catch { return null; }
+}
+
+// Junta a coleta + o salvamento do arquivo. Usado pelo POST /coletar (JSON) e
+// pelo GET /download (arquivo direto), para nao duplicar a regra de filtros.
+async function coletarAfdTenant(req, { idEquipamento, modo = 'incremental', nsr, dataInicio, formato } = {}) {
+  const id = Number(idEquipamento);
+  if (!Number.isFinite(id)) throw new Error('idEquipamento invalido');
+  const [reps] = await req.db.query(
+    'SELECT * FROM equipamentos WHERE id_Equipamento = ?', [id]
+  );
+  if (!reps.length) {
+    const e = new Error('equipamento nao encontrado'); e.status = 404; throw e;
+  }
+  const rep = reps[0];
+  if (!rep.IpAddress) {
+    const e = new Error('equipamento sem IpAddress'); e.status = 400; throw e;
+  }
+
+  const mode = String(formato || rep.REPType || '1510');
+  const client = new IdCloudClient(req.db);
+  const base = {
+    ip: rep.IpAddress, porta: rep.Porta || 443,
+    usuario: 'admin', senha: rep.Passcode || 'admin',
+    idEquipamento: id, mode, client,
+  };
+
+  let r;
+  if (modo === 'incremental') {
+    const [st] = await req.db.query(
+      'SELECT last_nsr FROM sync_status WHERE id_Equipamento = ?', [id]
+    );
+    const lastNsr = st?.[0]?.last_nsr || 0;
+    r = await coletarAfdRep({
+      ...base, initialNsr: lastNsr + 1, desdeNsr: lastNsr, atualizarCursor: true,
+    });
+  } else {
+    if (modo === 'nsr' && !Number.isFinite(Number(nsr))) {
+      const e = new Error('nsr invalido'); e.status = 400; throw e;
+    }
+    const data = modo === 'data' ? dataParaApi(dataInicio) : null;
+    if (modo === 'data' && !data) {
+      const e = new Error('dataInicio invalida (use YYYY-MM-DD)'); e.status = 400; throw e;
+    }
+    r = await coletarAfdRep({
+      ...base,
+      completo: modo === 'completo',
+      initialNsr: modo === 'nsr' ? Number(nsr) : null,
+      initialDate: data,
+      desdeNsr: 0,
+      atualizarCursor: false,
+    });
+  }
+
+  const arquivo = await salvarArquivoAfd(req.db, {
+    schema: req.tenant.schema,
+    origem: 'idclass',
+    formato: mode === '671' ? '671' : '595',
+    serial: rep.Serial,
+    idEquipamento: id,
+    texto: r.texto,
+    nsrInicial: modo === 'nsr' ? Number(nsr) : null,
+    nsrFinal: r.maxNsr || null,
+    dataInicio: modo === 'data' ? dataInicio : null,
+  });
+  return { r, arquivo, mode, rep };
+}
+
+app.post('/api/afd/coletar', async (req, res) => {
+  try {
+    const { r, arquivo } = await coletarAfdTenant(req, req.body || {});
+    res.json({ ok: true, inseridos: r.inseridos, maxNsr: r.maxNsr, arquivo });
+  } catch (e) { res.status(e.status || 502).json({ error: e.message }); }
+});
+
+// Download direto do AFD do REP, com o filtro pedido. O arquivo tambem fica
+// salvo e listado em /api/afd/arquivos (auditoria).
+app.get('/api/afd/download', async (req, res) => {
+  try {
+    const { idEquipamento, modo = 'completo', nsr, dataInicio, formato } = req.query;
+    const { r, mode } = await coletarAfdTenant(req, {
+      idEquipamento, modo, nsr, dataInicio, formato,
+    });
+    const sufixo = modo === 'nsr' ? `_nsr${nsr}` : (modo === 'data' ? `_${dataInicio}` : '_completo');
+    res.setHeader('Content-Type', 'text/plain; charset=iso-8859-1');
+    res.setHeader('Content-Disposition', `attachment; filename="AFD_${idEquipamento}${sufixo}.txt"`);
+    res.send(r.texto);
+  } catch (e) { res.status(e.status || 502).json({ error: e.message }); }
+});
+
+app.get('/api/afd/arquivos', async (req, res) => {
+  try {
+    const { idEquipamento, origem, limite } = req.query;
+    const rows = await listarArquivos(req.db, {
+      origem: origem || null,
+      idEquipamento: idEquipamento ? Number(idEquipamento) : null, limite,
+    });
+    res.json(rows);
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+app.get('/api/afd/arquivos/:id/download', async (req, res) => {
+  try {
+    const row = await lerArquivoAfd(req.db, req.params.id);
+    if (!row) return res.status(404).json({ error: 'arquivo nao encontrado' });
+    if (row.conteudo == null) return res.status(410).json({ error: row.erro || 'arquivo indisponivel' });
+    res.setHeader('Content-Type', 'text/plain; charset=iso-8859-1');
+    res.setHeader('Content-Disposition', `attachment; filename="${row.nome || 'AFD'}.txt"`);
+    res.send(row.conteudo);
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// ---------- iDFace: administracao e leitura (escopo do tenant) ----------
+// O push publico (por token) esta definido ANTES do authTenant. Estas rotas
+// exigem o login do cliente (JWT ou Basic + X-Client-DB).
+app.get('/api/idface/dispositivos', async (req, res) => {
+  try { res.json(await idface.listarDispositivos(req.db)); }
+  catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+app.post('/api/idface/dispositivos', async (req, res) => {
+  try {
+    const disp = await idface.criarDispositivo(req.db, req.body || {});
+    _cacheTokenPush.clear();
+    const base = `${basePublica(req)}/api/idface/${req.tenant.schema}/${disp.token}`;
+    res.status(201).json({ ...disp, push_base: base, push_url: `${base}/push` });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+app.put('/api/idface/dispositivos/:id', async (req, res) => {
+  try {
+    const disp = await idface.atualizarDispositivo(req.db, req.params.id, req.body || {});
+    if (!disp) return res.status(404).json({ error: 'dispositivo nao encontrado' });
+    _cacheTokenPush.clear();
+    res.json(disp);
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+app.delete('/api/idface/dispositivos/:id', async (req, res) => {
+  try {
+    await idface.atualizarDispositivo(req.db, req.params.id, { ativo: 0 });
+    _cacheTokenPush.clear();
+    res.json({ ok: true });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Enfileira um comando. O equipamento executa no proximo poll.
+app.post('/api/idface/dispositivos/:id/coletar', async (req, res) => {
+  try {
+    const disp = await idface.buscarDispositivo(req.db, req.params.id);
+    if (!disp) return res.status(404).json({ error: 'dispositivo nao encontrado' });
+
+    const { tipo = 'afd', formato = disp.portaria, modo = 'completo', nsr, dataInicio } = req.body || {};
+    const comandos = [];
+
+    if (tipo === 'logs') {
+      comandos.push(await idface.enfileirarComando(req.db, disp.id, {
+        endpoint: 'load_objects',
+        body: { object: 'access_logs', limit: 1000, offset: 0 },
+      }));
+    } else if (tipo === 'usuarios') {
+      comandos.push(await idface.enfileirarComando(req.db, disp.id, {
+        endpoint: 'load_objects',
+        body: { object: 'users', limit: 1000, offset: 0 },
+      }));
+      comandos.push(await idface.enfileirarComando(req.db, disp.id, {
+        endpoint: 'load_objects',
+        body: { object: 'c_users', limit: 1000, offset: 0 },
+      }));
+    } else {
+      const body = {};
+      if (modo === 'nsr') {
+        if (!Number.isFinite(Number(nsr))) {
+          return res.status(400).json({ error: 'nsr invalido' });
+        }
+        body.initial_nsr = Number(nsr);
+      }
+      if (modo === 'data') {
+        const data = dataParaApi(dataInicio);
+        if (!data) return res.status(400).json({ error: 'dataInicio invalida (use YYYY-MM-DD)' });
+        body.initial_date = data;
+      }
+      comandos.push(await idface.enfileirarComando(req.db, disp.id, {
+        endpoint: 'export_afd',
+        body,
+        queryString: String(formato) === '671' ? 'mode=671' : null,
+      }));
+    }
+
+    res.json({ ok: true, comandos, aviso: 'O equipamento executa no proximo poll.' });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+app.get('/api/idface/dispositivos/:id/marcacoes', async (req, res) => {
+  try {
+    const { documento, inicio, fim, limite } = req.query;
+    res.json(await idface.listarMarcacoes(req.db, {
+      idDispositivo: Number(req.params.id), documento, dataInicio: inicio, dataFim: fim, limite,
+    }));
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+app.get('/api/idface/dispositivos/:id/usuarios', async (req, res) => {
+  try { res.json(await idface.listarUsuarios(req.db, req.params.id)); }
+  catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+app.get('/api/idface/dispositivos/:id/vinculos', async (req, res) => {
+  try { res.json(await idface.listarVinculos(req.db, req.params.id)); }
+  catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+app.post('/api/idface/dispositivos/:id/vinculos', async (req, res) => {
+  try {
+    const { deviceUserId, idPessoa = null, documento = null, origem = 'manual' } = req.body || {};
+    if (deviceUserId == null) return res.status(400).json({ error: 'deviceUserId obrigatorio' });
+    const v = await idface.vincularUsuario(req.db, {
+      idDispositivo: Number(req.params.id), deviceUserId, idPessoa, documento, origem,
+    });
+    res.status(201).json(v);
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Leitura consolidada para sistemas externos (MultiPonto, Secullum, etc.).
+// Mesma autenticacao do resto: Basic (empresa) + X-Client-DB, ou JWT.
+app.get('/api/idface/marcacoes', async (req, res) => {
+  try {
+    const { idDispositivo, documento, inicio, fim, limite } = req.query;
+    res.json(await idface.listarMarcacoes(req.db, {
+      idDispositivo: idDispositivo ? Number(idDispositivo) : null,
+      documento, dataInicio: inicio, dataFim: fim, limite,
+    }));
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+app.get('/api/idface/arquivos', async (req, res) => {
+  try {
+    const { idDispositivo, limite } = req.query;
+    res.json(await listarArquivos(req.db, {
+      origem: 'idface', idDispositivo: idDispositivo ? Number(idDispositivo) : null, limite,
+    }));
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+app.get('/api/idface/arquivos/:id/download', async (req, res) => {
+  try {
+    const row = await lerArquivoAfd(req.db, req.params.id);
+    if (!row) return res.status(404).json({ error: 'arquivo nao encontrado' });
+    if (row.conteudo == null) return res.status(410).json({ error: row.erro || 'arquivo indisponivel' });
+    res.setHeader('Content-Type', 'text/plain; charset=iso-8859-1');
+    res.setHeader('Content-Disposition', `attachment; filename="${row.nome || 'AFD'}.txt"`);
+    res.send(row.conteudo);
   } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
@@ -761,13 +1292,23 @@ try { iniciarPoller(getCorePool, getTenantPool); } catch {}
 // canal) ele simplesmente nao existe, e o app segue normal pela API.
 const CERT_PEM = process.env.IDCLOUD_CERT || path.join(__dirname, 'cert.pem');
 const KEY_PEM = process.env.IDCLOUD_KEY || path.join(__dirname, 'chave.pem');
-if (fs.existsSync(CERT_PEM) && fs.existsSync(KEY_PEM)) {
+// Em Railway/container sem volume nao ha como montar arquivo: aceita o PEM no
+// proprio env (multiline). Sem isso o canal so subia se o arquivo existisse.
+const pemEnv = (v) => (v ? String(v).replace(/\\n/g, '\n') : null);
+const certConteudo = pemEnv(process.env.IDCLOUD_CERT_PEM)
+  || (fs.existsSync(CERT_PEM) ? fs.readFileSync(CERT_PEM) : null);
+const keyConteudo = pemEnv(process.env.IDCLOUD_KEY_PEM)
+  || (fs.existsSync(KEY_PEM) ? fs.readFileSync(KEY_PEM) : null);
+if (certConteudo && keyConteudo) {
   import('./idcloudServer.js')
     .then(({ criarServidor }) => criarServidor({
-      cert: fs.readFileSync(CERT_PEM),
-      key: fs.readFileSync(KEY_PEM),
+      cert: certConteudo,
+      key: keyConteudo,
       porta: Number(process.env.IDCLOUD_PORTA || 443),
-      host: process.env.IDCLOUD_HOST || '0.0.0.0',
+      // IDCLOUD_HOST e' o host do MySQL e NAO pode ser reutilizado aqui: na VPS
+      // ele costuma ser "localhost" (o canal ficaria so no loopback) e no
+      // docker-compose e' "mysql" (que nem existe como interface local).
+      host: process.env.IDCLOUD_BIND || '0.0.0.0',
     }))
     .then(() => console.log(`[idcloud] canal ativo em ${process.env.IDCLOUD_PORTA || 443}`))
     .catch((e) => console.error('[idcloud] nao subiu:', e.message));
@@ -780,7 +1321,12 @@ if (fs.existsSync(CERT_PEM) && fs.existsSync(KEY_PEM)) {
 const detalheErro = (e) => [e.code, e.errno, e.sqlMessage, e.message].filter(Boolean).join(' | ') || String(e);
 inicializarCore()
   .then(() => console.log('[startup] esquema do core garantido (izcloud_core + tabelas)'))
-  .catch((e) => console.error('[startup] FALHA ao criar esquema do core:', detalheErro(e)));
+  // Migra os tenants existentes no boot: e' o que garante rep_coletas, Serial,
+  // templates etc. em empresas criadas antes dessas colunas/tabelas. Sem isso o
+  // canal do REP falha no primeiro contato com "table doesn't exist".
+  .then(() => migrarTenantsExistentes())
+  .then((falhas) => console.log(`[startup] tenants migrados (${falhas.length} falha(s))`))
+  .catch((e) => console.error('[startup] FALHA no esquema do core/tenants:', detalheErro(e)));
 
 // Verificacao de banco (aparece nos logs da Railway para facilitar debug)
 verificarConexaoCore()

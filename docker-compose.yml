@@ -35,8 +35,22 @@ services:
       JWT_SECRET: ${JWT_SECRET:-trocavel_em_producao}
       IZCLOUD_ADMIN_KEY: ${IZCLOUD_ADMIN_KEY:-chave_setup}
       PORT: 3100
+      # Canal iDCloud. IDCLOUD_HOST e o MySQL (acima); o bind do canal e este.
+      IDCLOUD_BIND: 0.0.0.0
+      IDCLOUD_PORTA: 443
+      REP_ADMIN_SENHA: ${REP_ADMIN_SENHA:-admin}
+      IDCLOUD_AFD_LIMIT: ${IDCLOUD_AFD_LIMIT:-0}
+      IDCLOUD_AUTOACEITE: ${IDCLOUD_AUTOACEITE:-true}
+      # URL publica usada para montar a URL de push do iDFace. Se vazio, usa
+      # o host da requisicao (funciona atras de proxy com trust proxy).
+      IZCLOUD_PUBLIC_URL: ${IZCLOUD_PUBLIC_URL:-}
+    volumes:
+      # AFD bruto (iDClass/iDFace) e importacoes. Sem volume, some no redeploy.
+      - afd_data:/app/data/afd
     ports:
       - "3100:3100"
+      - "443:443"
 
 volumes:
   mysql_data:
+  afd_data:

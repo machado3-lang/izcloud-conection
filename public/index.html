@@ -347,26 +347,28 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
       <section data-pane="reps" class="fade-in">
         <div class="glass-card">
           <h3><span id="h-probe"></span> 1. Sondar REP (auto-detecta 1510/671)</h3>
+          <p class="muted" style="margin-bottom:12px;">Use a porta do <b>web server</b> do REP (padrão 443; alguns firmwares usam 5432). O canal iDCloud sempre usa 443.</p>
           <div class="row">
             <div><label class="fld">IP do REP</label><input id="p_ip" class="form-input" placeholder="192.168.100.132" /></div>
-            <div><label class="fld">Porta</label><input id="p_porta" class="form-input" value="443" /></div>
+            <div><label class="fld">Porta do web server</label><input id="p_porta" class="form-input" value="443" title="Padrão 443; alguns firmwares usam 5432" /></div>
             <div><label class="fld">Usuário</label><input id="p_user" class="form-input" value="admin" /></div>
             <div><label class="fld">Senha</label><input id="p_pass" type="password" class="form-input" value="admin" /></div>
           </div>
           <button class="btn-primary" id="p_probe" style="margin-top:14px;">Sondar</button>
           <div id="p_probe_out"></div>
         </div>
-        <div class="glass-card" id="p_cadastro" style="display:none;margin-top:1.5rem;">
+        <div class="glass-card" id="p_cadastro" style="margin-top:1.5rem;">
           <h3><span id="h-cad"></span> 2. Cadastrar REP na nuvem</h3>
+          <p class="muted" style="margin-bottom:12px;">Se a nuvem não alcança o REP (rede do cliente/NAT), digite o número de série manualmente e cadastre. O <b>Sondar</b> só funciona quando o REP é alcançável a partir do servidor.</p>
           <div class="row">
-            <div style="flex:2;"><label class="fld">Número de série (o id do equipamento)</label><input id="c_serial" class="form-input" placeholder="preenchido pelo Sondar" readonly /></div>
+            <div style="flex:2;"><label class="fld">Número de série (o id do equipamento)</label><input id="c_serial" class="form-input" placeholder="preenchido pelo Sondar ou digitado manualmente" /></div>
             <div><label class="fld">Nome</label><input id="c_nome" class="form-input" /></div>
             <div><label class="fld">IpAddress</label><input id="c_ip" class="form-input" /></div>
-            <div><label class="fld">Porta</label><input id="c_porta" class="form-input" /></div>
+            <div><label class="fld">Porta</label><input id="c_porta" class="form-input" value="443" title="Padrão 443; alguns firmwares usam 5432" /></div>
           </div>
           <div class="row">
             <div><label class="fld">Passcode (senha de comunicação)</label><input id="c_pass" type="password" class="form-input" /></div>
-            <div><label class="fld">REPType (portaria)</label><select id="c_tipo" class="form-input"><option value="1510">1510</option><option value="671">671</option></select></div>
+            <div><label class="fld">REPType (portaria)</label><select id="c_tipo" class="form-input"><option value="1510">1510</option><option value="595">595 (PIS/1510)</option><option value="671">671</option></select></div>
             <div><label class="fld">Modo de conexão</label>
               <select id="c_modo" class="form-input">
                 <option value="nuvem_puxa">nuvem_puxa (iZCloud puxa do REP)</option>
@@ -401,12 +403,10 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
           </div>
         </div>
         <div class="glass-card" style="margin-top:1.5rem;">
-          <h3><span id="h-add"></span> Adicionar funcionário e enviar ao REP</h3>
+          <h3><span id="h-add"></span> Adicionar funcionário (salva na nuvem; envio ao REP é opcional)</h3>
+          <p class="muted" style="margin-bottom:12px;">O cadastro fica salvo mesmo sem conexão com o REP. Se escolher um REP, o sistema usa o IP/porta/senha já cadastrados no equipamento e envia na hora; o envio também pode ser feito depois em “Importar / enviar”.</p>
           <div class="row">
-            <div><label class="fld">REP (IP)</label><input id="u_ip" class="form-input" placeholder="192.168.100.132" /></div>
-            <div><label class="fld">Porta</label><input id="u_porta" class="form-input" value="443" /></div>
-            <div><label class="fld">Usuário REP</label><input id="u_user" class="form-input" value="admin" /></div>
-            <div><label class="fld">Senha REP</label><input id="u_pass" type="password" class="form-input" value="admin" /></div>
+            <div style="flex:1.4;"><label class="fld">REP (opcional — salvar e enviar)</label><select id="u_rep" class="form-input"><option value="0">— só salvar na nuvem —</option></select></div>
           </div>
           <div class="row">
             <div><label class="fld">Portaria do REP</label><select id="u_port" class="form-input"><option value="1510">1510 (PIS)</option><option value="671">671 (CPF)</option></select></div>
@@ -422,16 +422,10 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
         </div>
 
         <div class="glass-card" style="margin-top:1.5rem;">
-          <h3><span id="h-sync2"></span> Sincronização com o REP (biometria)</h3>
-          <p class="muted" style="margin-bottom:12px;">Conecte-se ao REP e importe funcionários/biometria da memória dele, ou envie ao REP apenas os funcionários vinculados (filtrado por vínculo).</p>
-          <div class="row">
-            <div><label class="fld">REP (IP)</label><input id="s_ip" class="form-input" placeholder="192.168.100.132" /></div>
-            <div><label class="fld">Porta</label><input id="s_porta" class="form-input" value="443" /></div>
-            <div><label class="fld">Usuário</label><input id="s_user" class="form-input" value="admin" /></div>
-            <div><label class="fld">Senha</label><input id="s_pass" type="password" class="form-input" value="admin" /></div>
-          </div>
+          <h3><span id="h-sync2"></span> Importar / enviar (usa o REP selecionado acima)</h3>
+          <p class="muted" style="margin-bottom:12px;">O iZCloud lê a empresa, os funcionários e a biometria que já estão na memória do REP. Usa o IP, a porta e a senha salvos no cadastro do equipamento — não precisa redigitar.</p>
           <div class="row" style="align-items:center;margin-top:14px;">
-            <button class="btn-primary" id="s_import" type="button">Importar do REP</button>
+            <button class="btn-primary" id="s_import" type="button">Importar empresa e funcionários do REP</button>
             <button class="btn-primary" id="s_push" type="button">Enviar vinculados ao REP</button>
           </div>
         </div>
@@ -459,9 +453,19 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
             <div><label class="fld">id_Equipamento</label><input id="e_eqp" type="number" class="form-input" placeholder="1" /></div>
             <div><label class="fld">Data início</label><input id="e_ini" type="date" class="form-input" /></div>
             <div><label class="fld">Data fim</label><input id="e_fim" type="date" class="form-input" /></div>
+            <div><label class="fld">Formato</label><select id="e_formato" class="form-input"><option value="1510">1510 (PIS)</option><option value="595">595 (PIS/1510)</option><option value="671">671 (CPF)</option></select></div>
             <div><label class="fld">Serial (opcional)</label><input id="e_serial" class="form-input" placeholder="00014003750029470" /></div>
           </div>
           <button class="btn-primary" id="e_exp" style="margin-top:14px;">Exportar</button>
+        </div>
+        <div class="glass-card" style="margin-top:1.5rem;">
+          <h3><span id="h-import"></span> Importar arquivo AFD (iDClass ou iDFace)</h3>
+          <p class="muted" style="margin-bottom:12px;">Aceita AFD no formato antigo (PIS/1510) ou novo (CPF/671), inclusive o arquivo gerado pelo iDFace. O arquivo é gravado no equipamento informado.</p>
+          <div class="row">
+            <div><label class="fld">id_Equipamento</label><input id="i_eqp" type="number" class="form-input" placeholder="1" /></div>
+            <div style="flex:2;"><label class="fld">Arquivo AFD</label><input id="i_file" type="file" class="form-input" accept=".txt,.afd,text/plain" /></div>
+          </div>
+          <button class="btn-primary" id="i_import" style="margin-top:14px;">Importar AFD</button>
         </div>
       </section>
 
@@ -495,7 +499,11 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
       <div style="flex:1;"><label class="fld">Nome fantasia</label><input id="em_nome" class="form-input" /></div>
     </div>
     <div class="row">
-      <div style="flex:1;"><label class="fld">CNPJ</label><input id="em_cnpj" class="form-input" /></div>
+      <div style="flex:0 0 130px;"><label class="fld">Tipo doc.</label><select id="em_tipo_doc" class="form-input"><option value="CNPJ">CNPJ</option><option value="CPF">CPF</option></select></div>
+      <div style="flex:1;"><label class="fld" id="em_doc_label">CNPJ</label><input id="em_cnpj" class="form-input" placeholder="12345678000100" /></div>
+      <div style="flex:1;"><label class="fld">CEI (INSS)</label><input id="em_cei" class="form-input" placeholder="opcional" /></div>
+    </div>
+    <div class="row">
       <div style="flex:2;"><label class="fld">Endereço</label><input id="em_end" class="form-input" /></div>
     </div>
     <div class="row">
@@ -543,6 +551,7 @@ const ICONS = {
   send: '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
   refresh: '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+  upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
   building: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M8 10h.01M16 10h.01M8 14h.01M16 14h.01"/>',
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
   chart: '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
@@ -562,7 +571,7 @@ function mountIcons() {
     'ni-usuarios': ['user', 18], 'ni-admin': ['shield', 18], 'ni-out': ['logout', 18],
     'h-probe': ['radio', 16], 'h-cad': ['save', 16], 'h-list': ['list', 16],
     'h-vinc': ['users', 16], 'h-add': ['user', 16],
-    'h-sync': ['refresh', 16], 'h-exp': ['download', 16], 'h-user': ['user', 16],
+    'h-sync': ['refresh', 16], 'h-exp': ['download', 16], 'h-import': ['upload', 16], 'h-user': ['user', 16],
     'h-sync2': ['refresh', 16],
     'h-graf': ['chart', 16], 'h-strep': ['server', 16], 'h-ult': ['clock', 16], 'h-top': ['users', 16],
   };
@@ -763,10 +772,11 @@ function renderEmpCard() {
       <button class="btn-ghost" id="emp_edit">Editar</button>
     </div>
     <div class="ec-grid">
-      <div class="ec-item"><div class="k">CNPJ</div><div class="v">${e.cnpj || '—'}</div></div>
-      <div class="ec-item"><div class="k">Endereço</div><div class="v">${e.endereco || '—'}</div></div>
-      <div class="ec-item"><div class="k">Responsável</div><div class="v">${e.responsavel_nome || '—'}</div></div>
-      <div class="ec-item"><div class="k">CPF do responsável</div><div class="v">${e.responsavel_cpf || '—'}</div></div>
+      <div class="ec-item"><div class="k">${e.tipo_documento || 'CNPJ'}</div><div class="v">${e.cnpj || '-'}</div></div>
+      <div class="ec-item"><div class="k">CEI</div><div class="v">${e.cei || '-'}</div></div>
+      <div class="ec-item"><div class="k">Endereço</div><div class="v">${e.endereco || '-'}</div></div>
+      <div class="ec-item"><div class="k">Responsável</div><div class="v">${e.responsavel_nome || '-'}</div></div>
+      <div class="ec-item"><div class="k">CPF do responsável</div><div class="v">${e.responsavel_cpf || '-'}</div></div>
     </div>`;
   $('emp_edit').onclick = () => abrirEmpModal(e);
 }
@@ -776,7 +786,10 @@ function abrirEmpModal(e) {
   $('empModalTitle').textContent = editando ? 'Editar empresa' : 'Cadastrar empresa';
   $('em_razao').value = editando ? (e.razao_social || '') : '';
   $('em_nome').value = editando ? (e.nome_empresa || '') : '';
+  $('em_tipo_doc').value = editando ? (e.tipo_documento || 'CNPJ') : 'CNPJ';
+  $('em_doc_label').textContent = $('em_tipo_doc').value;
   $('em_cnpj').value = editando ? (e.cnpj || '') : '';
+  $('em_cei').value = editando ? (e.cei || '') : '';
   $('em_end').value = editando ? (e.endereco || '') : '';
   $('em_resp_nome').value = editando ? (e.responsavel_nome || '') : '';
   $('em_resp_cpf').value = editando ? (e.responsavel_cpf || '') : '';
@@ -787,13 +800,15 @@ function abrirEmpModal(e) {
   $('empModal').classList.remove('hidden');
 }
 $('em_cancel').onclick = () => $('empModal').classList.add('hidden');
+$('em_tipo_doc').onchange = () => { $('em_doc_label').textContent = $('em_tipo_doc').value; };
 $('emp_new').onclick = () => abrirEmpModal(null);
 
 $('em_save').onclick = async () => {
   try {
     const id = $('empModal').dataset.id;
     const payload = {
-      razao_social: $('em_razao').value, nome_empresa: $('em_nome').value, cnpj: $('em_cnpj').value,
+      razao_social: $('em_razao').value, nome_empresa: $('em_nome').value,
+      tipo_documento: $('em_tipo_doc').value, cnpj: $('em_cnpj').value, cei: $('em_cei').value,
       endereco: $('em_end').value, responsavel_nome: $('em_resp_nome').value, responsavel_cpf: $('em_resp_cpf').value,
     };
     if (!id) { payload.login = $('em_login').value; payload.senha = $('em_senha').value; }
@@ -1047,7 +1062,7 @@ $('p_probe').onclick = async () => {
   try {
     const r = await api('/api/reps/probe', { method: 'POST', body: JSON.stringify({ ip: $('p_ip').value, porta: Number($('p_porta').value), usuario: $('p_user').value, senha: $('p_pass').value }) });
     const det = r.portaria ? `<span class="pill c">${r.portaria}</span>` : '<span class="pill am">portaria não detectada</span>';
-    out.innerHTML = `<div class="msg ok">Conectado ✔ ${det}<div class="kv" style="margin-top:6px;"><b>Modelo:</b> ${r.modelo || '-'} &nbsp; <b>Serial:</b> ${r.serial || '-'}<br/><b>Firmware:</b> ${r.firmware || '-'} (${r.firmwareHex || '-'}) &nbsp; <b>Facial:</b> ${r.isFacial ? 'sim' : 'não'}<br/><b>Usuários:</b> ${r.usuarios ?? '-'} &nbsp; <b>Templates:</b> ${r.templates ?? '-'}</div></div>`;
+    out.innerHTML = `<div class="msg ok">Conectado ✔ ${det}<div class="kv" style="margin-top:6px;"><b>Modelo:</b> ${r.modelo || '-'} &nbsp; <b>Serial:</b> ${r.serial || '-'}<br/><b>Firmware:</b> ${r.firmwareDisplay || r.firmware || '-'} (${r.firmwareHex || '-'}) &nbsp; <b>MRP:</b> ${r.mrpDisplay || r.mrp || '-'} &nbsp; <b>Facial:</b> ${r.isFacial ? 'sim' : 'não'}<br/><b>Usuários:</b> ${r.usuarios ?? '-'} &nbsp; <b>Templates:</b> ${r.templates ?? '-'}</div></div>`;
     // O id do cadastro e' o SERIAL do aparelho: no contrato iDCloud o REP se
     // reconhece lendo `equipamentos` e casando id_Equipamento com ele mesmo.
     SERIAL_SONDADO = r.serial || '';
@@ -1061,9 +1076,14 @@ $('p_probe').onclick = async () => {
 };
 $('c_save').onclick = async () => {
   try {
-    if (!SERIAL_SONDADO) { toast('Sondar o REP primeiro — o cadastro usa o número de série do aparelho.', 'error'); return; }
-    const r = await api('/api/reps', { method: 'POST', body: JSON.stringify({ serial: SERIAL_SONDADO, Nome: $('c_nome').value, IpAddress: $('c_ip').value, Porta: Number($('c_porta').value), Passcode: $('c_pass').value, REPType: $('c_tipo').value, ModoConexao: $('c_modo').value }) });
-    toast('REP cadastrado com o id ' + r.id_Equipamento + '.', 'success'); loadReps();
+    // O serial pode vir do Sondar (quando o REP e' alcancavel) ou ser digitado
+    // manualmente. O cadastro na nuvem nao pode exigir alcancar o REP: ele fica
+    // atras do NAT do cliente e quem inicia a conexao e' ele (canal iDCloud).
+    const serial = ($('c_serial').value || SERIAL_SONDADO || '').trim();
+    if (!serial) { toast('Informe o número de série do REP (ou use o Sondar).', 'error'); return; }
+    const r = await api('/api/reps', { method: 'POST', body: JSON.stringify({ serial, Nome: $('c_nome').value, IpAddress: $('c_ip').value, Porta: Number($('c_porta').value), Passcode: $('c_pass').value, REPType: $('c_tipo').value, ModoConexao: $('c_modo').value }) });
+    toast('REP cadastrado com o id ' + r.id_Equipamento + '.', 'success');
+    await loadReps(); await carregarVinculo();
   } catch (e) { toast(e.message, 'error'); }
 };
 async function loadReps() {
@@ -1072,14 +1092,30 @@ async function loadReps() {
   try {
     const rows = await api('/api/reps');
     if (!rows.length) { box.innerHTML = '<p class="muted">Nenhum REP cadastrado.</p>'; return; }
-    box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr><th>ID</th><th>Nome</th><th>IP:Porta</th><th>Tipo</th><th>Modo</th><th>Pessoas</th><th>Digitais</th></tr></thead><tbody>' +
+    box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr><th>ID</th><th>Nome</th><th>IP:Porta</th><th>Tipo</th><th>Modo</th><th>Pessoas</th><th>Digitais</th><th>Importar</th></tr></thead><tbody>' +
       rows.map(r => {
         const modo = r.ModoConexao || 'nuvem_puxa';
         const modoPill = modo === 'rep_empurra' ? '<span class="pill am">rep_empurra</span>' : '<span class="pill c">nuvem_puxa</span>';
         return `<tr><td>${r.id_Equipamento}</td><td><b>${r.Nome || '-'}</b>
           <div class="muted" style="font-size:.72rem">série ${r.Serial || '-'}</div></td>
-          <td>${r.IpAddress || '-'}:${r.Porta ?? '-'}</td><td>${r.REPType ? `<span class="pill c">${r.REPType}</span>` : '-'}</td><td>${modoPill}</td><td>${r.qtdePessoas ?? '-'}</td><td>${r.qtdeDigitais ?? '-'}</td></tr>`;
+          <td>${r.IpAddress || '-'}:${r.Porta ?? '-'}</td><td>${r.REPType ? `<span class="pill c">${r.REPType}</span>` : '-'}</td><td>${modoPill}</td><td>${r.qtdePessoas ?? '-'}</td><td>${r.qtdeDigitais ?? '-'}</td>
+          <td><button class="btn-ghost" type="button" data-import="${r.id_Equipamento}" title="Lê empresa/funcionários do iDClass. Para iDFace, use a aba AFD > Importar arquivo AFD.">Importar</button></td></tr>`;
       }).join('') + '</tbody></table></div>';
+    box.querySelectorAll('button[data-import]').forEach((b) => {
+      b.onclick = async () => {
+        const id = b.dataset.import;
+        b.disabled = true; b.textContent = 'Importando...';
+        try {
+          const r = await api('/api/reps/' + id + '/importar', { method: 'POST', body: JSON.stringify({}) });
+          const emp = r.empresa ? `empresa "${r.empresa.RazaoSocial || ''}", ` : '';
+          toast(`Importado do REP: ${emp}${r.pessoas} funcionário(s), ${r.templates} template(s).`, 'success');
+          await loadReps(); await carregarVinculo(); await carregarPainel();
+        } catch (e) {
+          toast(e.message, 'error');
+          b.disabled = false; b.textContent = 'Importar';
+        }
+      };
+    });
   } catch (e) { box.innerHTML = '<div class="msg err">' + e.message + '</div>'; }
 }
 $('r_refresh').onclick = loadReps;
@@ -1094,7 +1130,12 @@ async function carregarVinculo() {
     BIO = await api('/api/pessoas/biometria');
     const sel = $('v_rep'); const keep = sel.value;
     sel.innerHTML = '<option value="0">— Todos os REPs —</option>' + r.map(x => `<option value="${x.id_Equipamento}">${x.id_Equipamento} · ${x.Nome || '-'}</option>`).join('');
-    sel.value = keep; renderVinculo();
+    sel.value = keep;
+    // Também alimenta o seletor do card "Adicionar funcionário".
+    const uSel = $('u_rep'); const keepU = uSel.value;
+    uSel.innerHTML = '<option value="0">— só salvar na nuvem —</option>' + r.map(x => `<option value="${x.id_Equipamento}" data-tipo="${x.REPType || ''}">${x.id_Equipamento} · ${x.Nome || '-'}</option>`).join('');
+    uSel.value = keepU;
+    renderVinculo();
   } catch (e) { $('v_list').innerHTML = '<div class="msg err">' + e.message + '</div>'; }
 }
 function repNome(id) { const r = V_REPS.find(x => x.id_Equipamento === id); return r ? (r.Nome || ('REP ' + id)) : ('REP ' + id); }
@@ -1139,31 +1180,43 @@ $('v_save').onclick = async () => {
   catch (e) { toast(e.message, 'error'); }
 };
 $('u_port').onchange = () => { $('u_doclabel').textContent = $('u_port').value === '671' ? 'CPF' : 'PIS'; };
+$('u_rep').onchange = () => {
+  const tipo = $('u_rep').selectedOptions[0]?.dataset?.tipo;
+  if (tipo === '1510' || tipo === '671') { $('u_port').value = tipo; $('u_port').onchange(); }
+};
 $('u_send').onclick = async () => {
   const port = $('u_port').value; const doc = $('u_doc').value.replace(/\D/g, '');
-  const pessoa = { nome: $('u_nome').value, codigo: Number($('u_codigo').value || 0), senha: $('u_senha').value, matricula: Number($('u_matr').value || 0) };
+  if (!doc) { toast('Informe o PIS/CPF.', 'error'); return; }
+  if (!$('u_nome').value.trim()) { toast('Informe o nome do funcionário.', 'error'); return; }
+  const pessoa = { nome: $('u_nome').value.trim(), codigo: Number($('u_codigo').value || 0), senha: $('u_senha').value, matricula: Number($('u_matr').value || 0) };
   if (port === '671') pessoa.cpf = doc; else pessoa.pis = doc;
+  const idEquipamento = Number($('u_rep').value) || null;
   try {
-    const r = await api('/api/pessoas', { method: 'POST', body: JSON.stringify({ rep: { ip: $('u_ip').value, porta: Number($('u_porta').value), portaria: port, usuario: $('u_user').value, senha: $('u_pass').value }, pessoa }) });
-    toast('Enviado ao REP ✔ idNuvem=' + (r.idNuvem ?? '-'), 'success');
+    const r = await api('/api/pessoas', { method: 'POST', body: JSON.stringify({ idEquipamento, rep: { portaria: port }, pessoa }) });
+    if (r.erroEnvio) toast('Funcionário salvo (id ' + r.idNuvem + '), mas o envio ao REP falhou: ' + r.erroEnvio, 'error');
+    else if (r.enviado) toast('Funcionário salvo (id ' + r.idNuvem + ') e enviado ao REP ✔', 'success');
+    else toast('Funcionário salvo na nuvem (id ' + r.idNuvem + '). Envio ao REP pendente.', 'success');
+    await carregarVinculo();
   } catch (e) { toast(e.message, 'error'); }
 };
 
-// Importar do REP (memoria -> iZCloud) e enviar vinculados (iZCloud -> REP)
+// Importar do REP (memoria -> iZCloud) e enviar vinculados (iZCloud -> REP).
+// Usa o cadastro do REP selecionado (IP/porta/Passcode) — sem redigitar.
 $('s_import').onclick = async () => {
   if (!temEmpresa()) { toast('Selecione uma empresa.', 'error'); return; }
-  if (V_REP === 0) { toast('Selecione um REP para vincular os importados.', 'error'); return; }
+  if (V_REP === 0) { toast('Selecione um REP na lista acima.', 'error'); return; }
   try {
-    const r = await api('/api/pessoas/importar', { method: 'POST', body: JSON.stringify({ rep: { ip: $('s_ip').value, porta: Number($('s_porta').value), usuario: $('s_user').value, senha: $('s_pass').value }, idEquipamento: V_REP }) });
-    toast(`Importado: ${r.pessoas} pessoas, ${r.templates} templates.`, 'success');
-    await carregarVinculo();
+    const r = await api('/api/reps/' + V_REP + '/importar', { method: 'POST', body: JSON.stringify({}) });
+    const emp = r.empresa ? `empresa "${r.empresa.RazaoSocial || ''}", ` : '';
+    toast(`Importado: ${emp}${r.pessoas} pessoas, ${r.templates} templates.`, 'success');
+    await carregarVinculo(); await loadReps(); await carregarPainel();
   } catch (e) { toast(e.message, 'error'); }
 };
 $('s_push').onclick = async () => {
   if (!temEmpresa()) { toast('Selecione uma empresa.', 'error'); return; }
-  if (V_REP === 0) { toast('Selecione um REP para enviar os vinculados.', 'error'); return; }
+  if (V_REP === 0) { toast('Selecione um REP na lista acima.', 'error'); return; }
   try {
-    const r = await api('/api/pessoas/sincronizar', { method: 'POST', body: JSON.stringify({ rep: { ip: $('s_ip').value, porta: Number($('s_porta').value), usuario: $('s_user').value, senha: $('s_pass').value }, idEquipamento: V_REP }) });
+    const r = await api('/api/pessoas/sincronizar', { method: 'POST', body: JSON.stringify({ idEquipamento: V_REP }) });
     toast(`Enviados ${r.enviados} funcionarios ao REP.`, 'success');
   } catch (e) { toast(e.message, 'error'); }
 };
@@ -1175,12 +1228,25 @@ $('a_sync').onclick = async () => {
 };
 $('e_exp').onclick = async () => {
   try {
-    const res = await fetch(API + '/api/afd/export', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ idEquipamento: Number($('e_eqp').value || 0), dataInicio: $('e_ini').value || undefined, dataFim: $('e_fim').value || undefined, serial: $('e_serial').value || undefined }) });
+    const res = await fetch(API + '/api/afd/export', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ idEquipamento: Number($('e_eqp').value || 0), dataInicio: $('e_ini').value || undefined, dataFim: $('e_fim').value || undefined, serial: $('e_serial').value || undefined, formato: $('e_formato').value }) });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || ('HTTP ' + res.status)); }
     const blob = await res.blob();
     const fn = (res.headers.get('content-disposition') || '').match(/filename="([^"]+)"/);
     const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = fn ? fn[1] : 'AFD.txt'; a.click(); URL.revokeObjectURL(url);
     toast('Download iniciado.', 'success');
+  } catch (e) { toast(e.message, 'error'); }
+};
+$('i_import').onclick = async () => {
+  try {
+    const id = Number($('i_eqp').value || 0);
+    if (!id) throw new Error('Informe o id_Equipamento.');
+    const file = $('i_file').files[0];
+    if (!file) throw new Error('Selecione o arquivo AFD.');
+    const texto = await file.text();
+    if (!texto.trim()) throw new Error('Arquivo vazio.');
+    const r = await api('/api/afd/import', { method: 'POST', body: JSON.stringify({ idEquipamento: id, texto }) });
+    toast(`AFD importado: ${r.total} linha(s).`, 'success');
+    $('i_file').value = '';
   } catch (e) { toast(e.message, 'error'); }
 };
 

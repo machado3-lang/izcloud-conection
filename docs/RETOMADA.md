@@ -2,6 +2,34 @@
 
 > **Este arquivo é o índice único para retomar o projeto.**
 > Snapshot de **25/09/2026**. Detalhes técnicos por completo no [`../README.md`](../README.md).
+>
+> **Retomada detalhada da sessão 04/11/2026:**
+> [`SESSAO-2026-11-04.md`](SESSAO-2026-11-04.md) — o que foi implementado,
+> validado no REP real, pendências e comandos para amanhã.
+>
+> **Continuação 05/11/2026:** [`SESSAO-2026-11-05.md`](SESSAO-2026-11-05.md) —
+> iDFace real (serial, `device_id`, `iDCloud_code`, modo ponto, AFD 595/671,
+> push/monitor) e análise do VPS de $3.
+>
+> **Comparativo iDFace × RHiD (05/11/2026):**
+> [`RHID-COMPARATIVO.md`](RHID-COMPARATIVO.md) — por que o AFD do equipamento
+> usa `users.id`, o que o RHiD fez com o usuário (`id` = PIS), por que 4
+> marcações antigas foram perdidas e a conclusão de arquitetura (equipamento =
+> coletor; iZCloud = coletor/repositório/provedor de AFD; o REP-P/PTRP é do
+> cliente).
+>
+> **Coletor iDFace + provedor de AFD implementados (05/11/2026):**
+> `idface.js`, `afdStore.js`, rotas `/api/idface/*` e
+> `/api/afd/coletar|arquivos`; ver [`IDFACE.md`](IDFACE.md) §8 e
+> [`SESSAO-2026-11-05.md`](SESSAO-2026-11-05.md) §8.
+>
+> **Atualização 04/11/2026:** o AFD completo foi **validado no REP real**
+> (38.543 linhas sem `limit`), a importação de **empresa + funcionários +
+> biometria** da memória do REP foi implementada e o canal foi corrigido
+> (`login` antes do `get_about`, schema da vaga, auto-aceite, `rep_coletas`).
+> Ver [`../README.md`](../README.md) §15 e [`PROTOCOLOS.md`](PROTOCOLOS.md) §16.
+> **O que continua bloqueando:** IP público fixo/TCP 443 para o REP — a Railway
+> não serve direto (ver [`IP-FIXO.md`](IP-FIXO.md), agora com relay **L4**).
 
 ---
 

@@ -174,7 +174,8 @@ CREATE TABLE IF NOT EXISTS templates (
 -- nao reprocessar o arquivo inteiro a cada conexao.
 CREATE TABLE IF NOT EXISTS rep_coletas (
   id              BIGINT AUTO_INCREMENT PRIMARY KEY,
-  id_reps         INT NOT NULL,
+  -- id_Equipamento = serial do REP (17 digitos): nao cabe em INT.
+  id_reps         BIGINT NOT NULL,
   serial          VARCHAR(32),
   ultimo_nsr      INT,                  -- maior NSR visto (ver idcloudServer)
   batidas         INT DEFAULT 0,
@@ -186,4 +187,129 @@ CREATE TABLE IF NOT EXISTS rep_coletas (
   atualizado_em   DATETIME,
   UNIQUE KEY uq_rep (id_reps),
   KEY idx_atualizado (atualizado_em)
+);
+
+-- ---------------------------------------------------------------------------
+-- iDFace: coletor de ponto (push oficial). O iDFace NAO e' REP-P: ele so
+-- entrega marcacoes. O iZCloud guarda o dispositivo, a fila de comandos, os
+-- resultados, as marcacoes e o vinculo device_user_id <-> pessoa.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS idface_dispositivos (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  token CHAR(48) NOT NULL,              -- token no path do push (/api/idface/<token>/push)
+  device_id BIGINT,                     -- deviceId estavel enviado no poll
+  serial VARCHAR(32),
+  idcloud_code VARCHAR(32),
+  nome VARCHAR(100),
+  id_Equipamento BIGINT,                -- vinculo opcional com equipamentos (mesma empresa)
+  portaria CHAR(4) DEFAULT '671',       -- '595' (PIS/1510-like) ou '671' (CPF)
+  ativo BIT DEFAULT 1,
+  ultimo_contato DATETIME,
+  ultimo_uuid VARCHAR(64),
+  criado_em DATETIME,
+  UNIQUE KEY uq_token (token),
+  KEY idx_device (device_id),
+  KEY idx_equip (id_Equipamento)
+);
+
+CREATE TABLE IF NOT EXISTS idface_comandos (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  id_dispositivo BIGINT NOT NULL,
+  verb VARCHAR(10) DEFAULT 'POST',
+  endpoint VARCHAR(100) NOT NULL,
+  body TEXT,                            -- JSON do corpo do comando
+  query_string VARCHAR(100),            -- ex.: mode=671 (NAO usar ? no endpoint)
+  content_type VARCHAR(60) DEFAULT 'application/json',
+  status ENUM('pendente','entregue','concluido','erro') DEFAULT 'pendente',
+  criado_em DATETIME,
+  entregue_em DATETIME,
+  concluido_em DATETIME,
+  erro VARCHAR(255),
+  KEY idx_fila (id_dispositivo, status, id)
+);
+
+CREATE TABLE IF NOT EXISTS idface_resultados (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  id_dispositivo BIGINT,
+  endpoint VARCHAR(100),
+  uuid VARCHAR(64),
+  response LONGTEXT,
+  erro VARCHAR(255),
+  criado_em DATETIME,
+  KEY idx_disp (id_dispositivo, id)
+);
+
+-- Marcacoes do iDFace. `device_user_id` e' o users.id do equipamento; o
+-- documento (PIS/CPF) so existe se o equipamento tiver sido provisionado assim.
+-- Guardamos os dois para nao depender de o id ser estavel (o RHiD troca).
+CREATE TABLE IF NOT EXISTS idface_marcacoes (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  id_dispositivo BIGINT NOT NULL,
+  device_user_id BIGINT,
+  documento VARCHAR(20),
+  nsr INT,
+  data_hora DATETIME,                   -- horario local do equipamento
+  data_hora_utc DATETIME,               -- mesmo instante em UTC
+  fuso VARCHAR(8),                      -- ex.: -0400
+  tipo_registro CHAR(1),                -- '3' ou '7'
+  origem VARCHAR(20),                   -- export_afd | access_logs | push
+  linha TEXT,
+  sha256 CHAR(64),
+  criado_em DATETIME,
+  UNIQUE KEY uq_marc (id_dispositivo, origem, nsr, data_hora),
+  KEY idx_data (data_hora),
+  KEY idx_doc (documento)
+);
+
+-- Ultimo snapshot de users/c_users do equipamento (para o operador mapear).
+CREATE TABLE IF NOT EXISTS idface_usuarios (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  id_dispositivo BIGINT NOT NULL,
+  device_user_id BIGINT NOT NULL,
+  registration VARCHAR(32),
+  nome VARCHAR(120),
+  cpf VARCHAR(20),
+  atualizado_em DATETIME,
+  UNIQUE KEY uq_user (id_dispositivo, device_user_id)
+);
+
+-- Vinculo versionado: nunca sobrescrever. Se o equipamento trocar o users.id,
+-- fecha o vinculo antigo (valid_to) e abre um novo; as marcacoes antigas
+-- continuam apontando para o vinculo antigo.
+CREATE TABLE IF NOT EXISTS idface_vinculos (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  id_dispositivo BIGINT NOT NULL,
+  device_user_id BIGINT NOT NULL,
+  id_pessoa INT,
+  documento VARCHAR(20),
+  valid_from DATETIME NOT NULL,
+  valid_to DATETIME,
+  origem VARCHAR(32),
+  UNIQUE KEY uq_vigente (id_dispositivo, device_user_id, valid_from),
+  KEY idx_pessoa (id_pessoa)
+);
+
+-- ---------------------------------------------------------------------------
+-- Arquivos AFD brutos (iDClass e iDFace), do jeito que o equipamento gerou.
+-- E' a fonte para o cliente baixar o AFD completo / por NSR / por data sem
+-- depender de recalcular CRC/header. O path fica em data/afd/<schema>/.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS afd_arquivos (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  origem VARCHAR(20) NOT NULL,          -- idclass | idface | import
+  formato VARCHAR(8),                   -- 595 | 671
+  serial VARCHAR(32),
+  id_Equipamento BIGINT,
+  id_dispositivo BIGINT,
+  nome VARCHAR(200),
+  caminho VARCHAR(500),
+  sha256 CHAR(64),
+  tamanho INT,
+  nsr_inicial INT,
+  nsr_final INT,
+  data_inicio DATETIME,
+  data_fim DATETIME,
+  criado_em DATETIME,
+  KEY idx_equip (id_Equipamento, criado_em),
+  KEY idx_disp (id_dispositivo, criado_em)
 );

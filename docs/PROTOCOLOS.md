@@ -526,7 +526,7 @@ na 443):
 
 | Leitura | Resultado |
 |---|---|
-| `get_about` | `nSerie = "00014003750029470"`, `versionFW = 1048`, `versionMRP = 1560` |
+| `get_about` | `nSerie = "00014003750029470"`, `versionFW = 1048` (decimal; display **418** = `0x418`), `versionMRP = 1560` (display **618** = `0x618`) |
 | `get_idcloud` | `{"enable": true, "interval": 2078000}` -- **o canal iDCloud esta LIGADO** |
 | `get_system_network` | `192.168.100.132/24`, gateway `192.168.100.1` |
 | `get_configuration` | **128 KB de binario cru** (131072 bytes), nao JSON |
@@ -859,8 +859,9 @@ Numa unica conexao TLS, sem o REP enviar um byte sequer:
 ```text
 POST /login.fcgi                  {"login":"admin","password":"admin"}
   -> {"session":"cJHFbXtyck33dghdWvVKCOkl"}
-POST /get_about.fcgi              {}
+POST /get_about.fcgi              {"session":"cJHFbXtyck33dghdWvVKCOkl"}
   -> {"mac":"FC:52:CE:80:E1:A5","nSerie":"00014003750029470",...}
+  (medido em 04/11/2026: sem `session` este firmware devolve 401)
 POST /get_system_information.fcgi {}
   -> {"user_count":20,"template_count":33,"last_nsr":38530,...}
 POST /get_afd.fcgi                {"limit":1000,"offset":0,"session":"..."}
@@ -939,33 +940,38 @@ segredo que o aparelho apresenta.
 - **tipo 3** sao as batidas (942 na janela de 1000 linhas);
 - tipo 0 e' o rodape, tipo 2 a empresa, tipo 5 eventos de operador (com nome).
 
-O `get_afd` deste firmware tem tres limites medidos:
+O `get_afd` deste firmware tem tres comportamentos medidos:
 
-1. `limit` maximo **1000** (acima: `'limit' m-ximo - 1000`);
-2. `offset` e' aceito mas **ignorado**;
-3. `nsrInicial`, `start`, `from`, `skip`, `dataInicio`, `mode`, `coletor`...
-   **nao paginam** - todos devolvem as mesmas primeiras N linhas.
+1. `limit` maximo **1000** (acima disso: `{"error":"'limit' maximo e 1000"}`);
+2. **sem `limit`, devolve o arquivo inteiro** - medido em 04/11/2026:
+   **38.543 linhas / 37.925 batidas / 1.541.609 bytes**;
+3. `offset`, `nsrInicial`, `start`, `from`, `skip`, `dataInicio`, `mode`,
+   `coletor`... **nao paginam**. Nao e' preciso: o arquivo inteiro ja vem sem
+   `limit`.
 
-Ou seja: **da para ler so o comeco do AFD**, e como o arquivo cresce anexando no
-fim, as batidas mais novas ficam fora de alcance ate o aparelho rotacionar. O
-cliente oficial contorna isso porque pagina no nivel da nuvem
-(`download?idEquipamento=&nsrInicial=&limit=&coletor=` contra o `rhidv2`), nao no
-aparelho.
+**Correcao (04/11/2026):** o risco de "so ver as primeiras 1000 linhas" era do
+**nosso** cliente, que mandava `limit: 1000`; nao do aparelho. O cliente oficial
+baixava sem `limit` (`repClient.baixarAfd` registra 38.523 linhas no README §9).
+O canal agora tambem chama `get_afd` sem `limit` (`IDCLOUD_AFD_LIMIT` permite
+voltar ao comportamento antigo).
 
 Consequencias no codigo:
 
-- `baixarAfd` faz **uma** requisicao e marca `truncado` - nao pagina, para nao
-  gravar a mesma janela 20 vezes (erro que eu cometi e que o teste pegou);
-- a gravacao e' **idempotente por NSR**: a tabela `afd` ja tem
-  `UNIQUE (id_Equipamento, NSR)`, entao a janela que volta sempre e' absorvida;
+- `baixarAfd` faz **uma** requisicao sem `limit` (arquivo inteiro);
+- a gravacao e' **idempotente por NSR** e em **lote de 500**: a tabela `afd` tem
+  `UNIQUE (id_Equipamento, NSR)`; o `desdeNsr` evita reprocessar o historico;
 - `rep_coletas` guarda `ultimo_nsr` para a UI mostrar se a coleta avanca.
 
 ### 12.6 O que foi construido
 
 `idcloudServer.js`:
 
-- `atenderConexao` - `get_about` primeiro, compara o `nSerie` com o REP esperado
-  daquele vagao, e so entao faz `login`. Sem vaga, derruba a conexao.
+- `atenderConexao` - **`login` primeiro**, depois `get_about` **com a sessao**,
+  compara o `nSerie` com o REP esperado daquele vagao e so entao le o estado.
+  Sem vaga/REP cadastrado, derruba a conexao.
+  > **Medido em 04/11/2026 no firmware v1048:** `get_about` sem `session`
+  > responde `{"error":"Invalid session","code":401}`. A versao antiga chamava
+  > `get_about` antes do login e nunca identificava o aparelho.
 - `SessaoRep` - cliente FCGI sobre a conexao TLS. Slot unico de pendencia (os
   comandos sao sequenciais), aceita fim de linha em `\n` e `\r\n` (o REP mistura
   os dois), e espera 500 ms antes do primeiro comando (mandando na hora o
@@ -993,7 +999,9 @@ não a lógica.
    (§11.2). Se preferir válido, Let's Encrypt é indiferente para o aparelho.
 3. apontar um nome para o IP e instalar o certificado no servidor.
 4. No `idcloudServer.js`, nada muda: `IDCLOUD_CERT`, `IDCLOUD_KEY`,
-   `IDCLOUD_PORTA` (default 443), `IDCLOUD_HOST` (default `0.0.0.0`).
+   `IDCLOUD_PORTA` (default 443) e **`IDCLOUD_BIND`** (default `0.0.0.0`).
+   `IDCLOUD_HOST` e o host do **MySQL** e nao pode ser reutilizado para o bind
+   do canal (era o bug que deixava o canal escutando so no loopback).
 
 ### 13.2 No REP
 
@@ -1011,16 +1019,25 @@ não a lógica.
 2. O REP conecta. O serviço valida o `nSerie` da vaga, abre sessão, lê e grava.
 3. Conferir: `GET /api/reps/:id/coleta` e `GET /api/coletas`.
 
+> **Coleta automática (04/11/2026):** o canal aceita sozinho um REP cujo `Serial`
+> ja esteja cadastrado em alguma empresa ativa (`IDCLOUD_AUTOACEITE=true`, padrao).
+> A reserva manual (`reservar-coleta`) continua valendo para aparelhos ainda nao
+> cadastrados. Sem o auto-aceite a coleta so acontece durante a janela reservada.
+
 ### 13.4 Segurança — o ponto que exige atenção
 
 **O REP não se apresenta.** Ele abre a conexão e não manda um byte, então não há
 como ele provar quem é, e um `login` com `admin/admin` funciona por qualquer um
 que chegue na 443. As três camadas, em ordem:
 
-1. **Trava de série** (implementada): a primeira coisa é `get_about.fcgi`, e o
-   `nSerie` precisa bater com o REP esperado da vaga. Sem vaga, derruba.
+1. **Trava de série** (implementada): o canal faz `login`, depois
+   `get_about.fcgi` **com a sessão**, e o `nSerie` precisa bater com o REP
+   cadastrado. Sem vaga/REP, derruba.
 2. **Senha forte** no web server do REP (implementada via `REP_ADMIN_SENHA`):
-   sem isso a trava vira só atraso.
+   sem isso a trava vira só atraso. **Limitação do firmware:** `get_about` exige
+   sessão, então o `login` acontece antes de sabermos o serial; a senha é
+   enviada a quem abriu a conexão. Use `REP_ADMIN_SENHA` forte e restrinja a 443
+   o máximo possível (firewall/rate limit).
 3. **Não expor a 443 para a internet inteira** sem a vaga ativa. Uma VPS é
    endereço público; se a 443 estiver aberta, qualquer um chega na trava.
 
@@ -1042,9 +1059,10 @@ Se aparecer `conexao recusada: nenhum REP reservado`, é a trava — chame
 
 ## 14. Perguntas em aberto (para a Control iD)
 
-1. **Rotação do AFD.** O aparelho entrega só as primeiras 1000 linhas e ignora
-   `offset`. O arquivo rotaciona sozinho quando enche? Com que tamanho? Sem
-   isso não temos o histórico completo — é o maior risco do produto.
+1. **AFD muito grande.** O aparelho entrega o arquivo inteiro sem `limit`
+   (medido: 38.543 linhas). Existe limite de tamanho ou rotação para arquivos
+   muito maiores? O `offset` continua ignorado; se o arquivo crescer além do
+   que cabe numa resposta, precisaremos de outra estratégia.
 2. **`get_afd` com data.** Existe parâmetro de período em alguma versão de
    firmware? Testei 10 nomes e nenhum pagina nesta versão (v1048, 2019).
 3. **Número curto de iDCloud.** Ele amarra o aparelho a uma empresa no lado do
@@ -1093,3 +1111,112 @@ curl -k -X POST -H "Content-Type: application/json" \
 
 > `load_users` exige `limit` **e** `offset` inteiros. Sem `offset` o aparelho
 > responde `'offset' deve ser do inteiro`.
+
+---
+
+## 16. Medição 04/11/2026 — AFD completo + importação da empresa/funcionários
+
+Rep de teste: `192.168.100.132`, web server em **5432**, `admin/admin`, firmware
+`versionFW=1048` decimal (display **418**), `user_count=21`, `template_count=34`, `last_nsr=38539`.
+
+### 16.1 AFD
+
+| Chamada | Resultado |
+|---|---|
+| `get_afd` com `limit: 1000` | 1.001 linhas / 942 batidas / 43.622 bytes |
+| `get_afd` **sem `limit`** | **38.543 linhas / 37.925 batidas / 1.541.609 bytes** |
+| `get_afd` com `limit: 2000` | HTTP 400 `'limit' maximo e 1000` |
+
+Conclusão: o arquivo inteiro está disponível. O `limit` era a causa do
+truncamento; `offset`/`nsrInicial` continuam ignorados e não são necessários.
+
+### 16.2 Empresa (`load_company`)
+
+```json
+{"company":{"name":"FERNANDO DE CASTRO",
+            "address":"GRANJA NOSSA SENHORA APARECIDA, S/N. - ...",
+            "cpf":1,"tipo_doc":2,"cpf_cnpj":27233456100,"cei":0}}
+```
+
+O iZCloud grava em `empregadores` (`RazaoSocial`, `Local`, `CNPJ_CPF`, `CEI`,
+`CPF`), aponta `equipamentos.id_Empregador` e preenche o perfil da empresa
+(`clientes.razao_social`/`cnpj`/`endereco`) **somente se estiver vazio**.
+
+### 16.3 Funcionários (`load_users`)
+
+- `limit` máximo **100**; `offset` funciona; a resposta traz `count` total.
+- Sem `limit`/`offset`: HTTP 400 `'limit' deve ser do tipo inteiro`.
+- `templates: true` devolve `templates` como **array de strings base64** (um por
+  digital). Sem o parâmetro só vem `templates_count`.
+- O cadastro traz `name`, `pis`, `code`, `registration`, `password`, `admin`,
+  `rfid`, `bars`.
+- O usuário de número curto (ex.: `pis=1`/`123`) é o código de iDCloud, **não**
+  um funcionário; a importação ignora documentos com 6 dígitos ou menos.
+
+### 16.4 Fluxo implementado
+
+1. O REP é cadastrado uma vez (serial + IP/porta/Passcode) — o serial pode ser
+   digitado manualmente, sem depender do Sondar.
+2. `POST /api/reps/:id/importar` lê `load_company` + `load_users?templates=true`
+   e grava empresa, funcionários, vínculos (`equip_pessoa`) e biometria
+   (`templates`).
+3. A partir daí o cliente pode cadastrar novos funcionários na nuvem e enviá-los
+   ao REP quando quiser (`POST /api/pessoas` com REP opcional para salvar;
+   `POST /api/pessoas/sincronizar` para enviar os vinculados).
+4. O canal iDCloud usa `login` → `get_about` (com sessão) → AFD, e aceita
+   automaticamente REP cujo `Serial` já esteja cadastrado.
+5. No **primeiro contato** pelo canal, se a empresa ainda não tem funcionários,
+   o próprio `coletar` lê `load_company` + `load_users?templates=true` na mesma
+   sessão e faz a importação inicial (`IDCLOUD_IMPORTAR_AUTOMATICO=true`).
+
+### 16.5 Envio de funcionário novo (validado em 04/11/2026)
+
+Teste com PIS temporário `99999999998` (removido ao final):
+
+```text
+add_users  {"users":[{"pis":99999999998,"name":"TESTE IZCLOUD ENVIO",
+                      "registration":8888,"code":8888,"password":"4321"}]} -> {}
+load_users -> name, pis, code=8888, registration=8888, password="4321"
+remove_users {"users":[99999999998]} -> {}
+load_users -> (ausente)
+```
+
+Isso confirma o fluxo "cadastrar na nuvem e enviar ao REP a qualquer momento".
+O `enviarUsuarios` normaliza `nome`/`matricula`/`codigo`/`senha` (campos da UI)
+para o formato do firmware (`name`/`registration`/`code`/`password`).
+
+### 16.6 iDFace como coletor de ponto
+
+O iDFace **não tem `load_company`**: ele não guarda o empregador na memória.
+Portanto, no iZCloud a empresa é cadastrada manualmente (CNPJ **ou** CPF, CEI e
+responsável), e o iDFace entra como equipamento com `REPType` 1510 (PIS) ou 671
+(CPF).
+
+O iDFace gera AFD nos dois layouts; o iZCloud importa o arquivo pela aba AFD
+(`POST /api/afd/import`) e o parser detecta o formato pela posição 14 da linha
+tipo 3. O iDFace chama o layout PIS de **595**; o conteúdo é o mesmo do 1510,
+então o iZCloud trata 595 como alias de 1510.
+
+A coleta automática do iDFace **não** precisa sintetizar AFD a partir de
+`access_logs`: o próprio equipamento tem `export_afd.fcgi` (sem `mode` = 595,
+com `&mode=671` = CPF; corpo `{}`, `{initial_nsr}` ou
+`{initial_date:{day,month,year}}`). O adaptador iDFace chama esse endpoint e
+importa o texto.
+
+**Implementado em 05/11/2026** (detalhes em [`IDFACE.md`](IDFACE.md) §8):
+
+- Push oficial: `GET/POST /api/idface/<schema>/<token>/push|result`, com token
+  no path e fila persistida (`idface_comandos`/`idface_resultados`).
+- Coleta: `POST /api/idface/dispositivos/:id/coletar` enfileira `export_afd`
+  (`queryString: mode=671` no 671), `load_objects access_logs` ou
+  `users`+`c_users`.
+- Armazenamento: `idface_marcacoes`, `idface_usuarios`, `idface_vinculos` e o
+  AFD bruto em `data/afd/<schema>/` (`afd_arquivos`). O canal iDCloud
+  (`idcloudServer.js`) também salva o AFD bruto de cada coleta.
+- Leitura externa: `GET /api/idface/marcacoes`, `GET /api/idface/arquivos`,
+  `GET /api/idface/arquivos/:id/download` (Basic + `X-Client-DB` ou JWT).
+
+O iZCloud é **coletor + repositório + provedor de AFD**. O REP-P/PTRP do
+cliente (MultiPonto ou outro) trata a jornada e emite os arquivos fiscais. Ver
+[`RHID-COMPARATIVO.md`](RHID-COMPARATIVO.md) para o comparativo que fechou
+esse desenho.

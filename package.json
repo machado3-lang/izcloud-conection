@@ -6,7 +6,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "test": "node test/p0.test.mjs && node test/importar.test.mjs && node test/afd.test.mjs && node test/idface.test.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",
