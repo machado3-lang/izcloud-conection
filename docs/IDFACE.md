@@ -490,6 +490,9 @@ O `POST /dispositivos` devolve `push_base` e `push_url`. No iDFace, configure
 
 ### 8.6 Como usar (exemplos)
 
+> Roteiro completo, com menu interativo e configuração do push no iDFace:
+> [`TESTE.md`](TESTE.md).
+
 Criar o dispositivo (JWT da conta/empresa):
 
 ```bash

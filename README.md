@@ -24,6 +24,7 @@ serviço pago deles** e com controle total dos dados.
 > **Comparativo iDFace × RHiD (por que o AFD usa `users.id`, PIS/CPF e a
 > arquitetura coletor × REP-P)** está em
 > [`docs/RHID-COMPARATIVO.md`](docs/RHID-COMPARATIVO.md).
+> **Teste passo a passo (iDFace + AFD do iDClass):** [`docs/TESTE.md`](docs/TESTE.md).
 > **Sessão 04/11/2026 (o que foi feito, validado e o que falta):**
 > [`docs/SESSAO-2026-11-04.md`](docs/SESSAO-2026-11-04.md).
 > **Continuação 05/11/2026 (iDFace real + VPS):**
@@ -249,6 +250,7 @@ Arquivos de apoio: `docker-compose.yml` (MySQL + Node), `.env.example`.
 | `schema_tenant.sql` | Tabelas de UM cliente (executado dentro de `tenant_XXXX`) |
 | `descobre_porta.mjs`, `captura_rep.mjs` | Diagnóstico do canal contra o REP real |
 | `test_idface.mjs`, `test_idface_push.mjs`, `test_idface_dump.mjs` | Diagnóstico iDFace (leitura, captura de push e dump para comparar RHiD), ver `docs/IDFACE.md` |
+| `test_izcloud.mjs`, `config_idface_push.mjs` | Guia interativo de teste da nuvem (login, dispositivo, coleta, AFD) e configuração do push no iDFace |
 | `test_rep_afd.mjs` | Diagnóstico do REP real: firmware, AFD com/sem limit, empresa e usuários |
 
 ---
