@@ -107,13 +107,36 @@ Lista os arquivos em `afd_arquivos`, pergunta o ID e salva no seu PC como
 
 ## 8. Baixar o AFD do iDClass (opção 8)
 
-Lista os REPs cadastrados (`/api/reps`), pergunta o `id_Equipamento` e o modo:
+Antes, cadastre o REP-C. No menu, use a **opção 10**:
+
+```text
+1) Sondar (o servidor do iZCloud precisa alcançar o REP)
+2) Cadastrar manual (só o número de série)
+```
+
+- **Sondar:** informe IP, porta do web server (443 ou 5432), usuário e senha.
+  Se o servidor alcançar o REP, ele preenche serial e portaria.
+- **Manual:** informe o número de série (o `nSerie` do REP) e os dados de
+  conexão. Serve quando o iZCloud está na nuvem e o REP está atrás do NAT.
+
+Depois, a **opção 8** lista os REPs cadastrados:
 
 - **completo**
 - **por NSR** (informe o NSR inicial)
 - **por data** (informe `YYYY-MM-DD`)
 
 Salva como `AFD_idclass_<id>_<modo>.txt`.
+
+> **Diferença importante de rede:** o iDFace usa **push HTTPS de saída** (o
+> aparelho conecta na nuvem), por isso funciona remoto. O iDClass **não** faz
+> esse push HTTP: ou a nuvem precisa **alcançar o IP do REP** (`nuvem_puxa`),
+> ou o REP precisa conectar no **canal iDCloud** (`rep_empurra`, que exige
+> 443 público/relay). Se o iZCloud está na nuvem e o REP em `192.168.x.x`, a
+> opção 8 vai dar timeout.
+>
+> Para testar o AFD do iDClass **agora**, rode o iZCloud **localmente** na mesma
+> rede do REP e use `http://localhost:3100` no `test_izcloud.mjs`. O acesso
+> remoto ao REP-C é exatamente o que o VPS/relay L4 vai resolver depois.
 
 > Para **671**, use `formato=671`: o arquivo vem bruto do REP (com CRC). O
 > gerador legado `POST /api/afd/export` só monta 1510.

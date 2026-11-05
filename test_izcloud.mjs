@@ -271,6 +271,61 @@ async function listarArquivosIdclass() {
   console.log(`\nSalvo em: ${nome} (${buf.length} bytes)`);
 }
 
+async function cadastrarRep() {
+  console.log('\nCadastrar REP iDClass (REP-C)');
+  console.log('  1) Sondar (o servidor do iZCloud precisa alcançar o REP)');
+  console.log('  2) Cadastrar manual (só o número de série)');
+  const op = await perguntar('Opcao (1/2): ', '2');
+
+  let serial = '';
+  let tipo = '1510';
+  let ip = '';
+  let porta = 443;
+  let pass = 'admin';
+
+  if (op === '1') {
+    ip = await perguntar('IP do REP: ');
+    porta = Number(await perguntar('Porta do web server (443/5432): ', '443'));
+    const usuario = await perguntar('Usuario: ', 'admin');
+    const senhaRep = await perguntar('Senha: ', 'admin');
+    try {
+      const r = await api('/api/reps/probe', {
+        method: 'POST', body: { ip, porta, usuario, senha: senhaRep },
+      });
+      console.log('\nSondagem OK:', JSON.stringify(r));
+      serial = r.serial || '';
+      tipo = r.portaria || tipo;
+    } catch (e) {
+      console.log('\nSondagem falhou (normal se o iZCloud esta na nuvem e o REP na LAN):');
+      console.log('  ' + e.message);
+      console.log('  Siga no modo manual: informe o numero de serie do REP.');
+    }
+  }
+
+  serial = await perguntar(`Numero de serie (id_Equipamento)${serial ? ` [${serial}]` : ''}: `, serial);
+  if (!serial) { console.log('Sem numero de serie nao da para cadastrar.'); return; }
+
+  const nome = await perguntar('Nome do REP: ', `REP ${serial}`);
+  ip = await perguntar('IP do REP (para nuvem_puxa; Enter = vazio): ', ip);
+  porta = Number(await perguntar('Porta do web server: ', String(porta || 443)));
+  pass = await perguntar('Passcode/senha do REP: ', pass || 'admin');
+  tipo = await perguntar(`REPType [1510/595/671] (padrao ${tipo}): `, tipo);
+  const modo = await perguntar('Modo [nuvem_puxa/rep_empurra] (padrao nuvem_puxa): ', 'nuvem_puxa');
+
+  const r = await api('/api/reps', {
+    method: 'POST',
+    body: {
+      serial, Nome: nome, IpAddress: ip || null, Porta: porta, Passcode: pass,
+      REPType: tipo, ModoConexao: modo,
+    },
+  });
+  console.log(`\nREP cadastrado: id_Equipamento=${r.id_Equipamento}, serial=${r.serial}`);
+  console.log('Agora a opcao 8 lista esse REP.');
+  console.log('Lembrete: para baixar o AFD, o iZCloud precisa alcancar o IP do REP.');
+  console.log('Se o iZCloud estiver na nuvem e o REP na LAN (192.168.x.x), rode o');
+  console.log('iZCloud localmente e use http://localhost:3100 neste script.');
+}
+
 async function status() {
   const h = await fetch(BASE + '/api/health').then((r) => r.json()).catch((e) => ({ erro: e.message }));
   console.log('\n/api/health:', JSON.stringify(h));
@@ -320,6 +375,7 @@ while (true) {
   console.log('7) Listar REPs iDClass');
   console.log('8) Baixar AFD do iDClass (completo / NSR / data)');
   console.log('9) Listar/baixar arquivos AFD salvos');
+  console.log('10) Cadastrar REP iDClass (REP-C)');
   console.log('0) Sair');
   const op = await perguntar('Opcao: ', '0');
   try {
@@ -332,6 +388,7 @@ while (true) {
     else if (op === '7') await listarReps();
     else if (op === '8') await baixarAfdIdclass();
     else if (op === '9') await listarArquivosIdclass();
+    else if (op === '10') await cadastrarRep();
     else if (op === '0') break;
     else console.log('Opcao invalida.');
   } catch (e) {
