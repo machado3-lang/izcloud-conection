@@ -76,7 +76,16 @@ No painel do provedor, libere **TCP 443 de entrada** (security group/firewall).
 
 ## 5. Serviço systemd (relay permanente)
 
-Crie `/etc/systemd/system/izcloud-relay.service`:
+Atalho: o script `deploy/vps-relay.sh` faz os passos 3–5 (instala o socat, cria
+o systemd e libera a 443):
+
+```bash
+bash deploy/vps-relay.sh
+# ou, se o proxy mudar:
+bash deploy/vps-relay.sh zephyr.proxy.rlwy.net 48331
+```
+
+Se preferir manual, crie `/etc/systemd/system/izcloud-relay.service`:
 
 ```ini
 [Unit]
