@@ -23,6 +23,9 @@
 > `/api/afd/coletar|arquivos`; ver [`IDFACE.md`](IDFACE.md) §8 e
 > [`SESSAO-2026-11-05.md`](SESSAO-2026-11-05.md) §8.
 >
+> **VPS relay L4 para o REP-C:** [`VPS-RELAY.md`](VPS-RELAY.md) — IP fixo na
+> 443 → TCP Proxy da Railway → `idcloudServer`.
+>
 > **Atualização 04/11/2026:** o AFD completo foi **validado no REP real**
 > (38.543 linhas sem `limit`), a importação de **empresa + funcionários +
 > biometria** da memória do REP foi implementada e o canal foi corrigido
