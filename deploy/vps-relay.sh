@@ -3,7 +3,7 @@
 #
 # Uso (como root, no VPS Ubuntu/Debian):
 #   bash vps-relay.sh
-#   bash vps-relay.sh zephyr.proxy.rlwy.net 48331
+#   bash vps-relay.sh maglev.proxy.rlwy.net 59446
 #
 # O que faz:
 #   1. instala socat
@@ -19,8 +19,8 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-HOST="${1:-zephyr.proxy.rlwy.net}"
-PORT="${2:-48331}"
+HOST="${1:-maglev.proxy.rlwy.net}"
+PORT="${2:-59446}"
 
 echo "[1/4] Instalando socat..."
 apt-get update -y

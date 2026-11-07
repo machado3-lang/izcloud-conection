@@ -14,7 +14,7 @@
 
 ```text
 REP-C (iDClass)                     VPS (IP fixo)                 Railway
-txtIPCloud = IP do VPS  ────────►  :443  (socat/nginx stream)  ────────►  zephyr.proxy.rlwy.net:48331
+txtIPCloud = IP do VPS  ────────►  :443  (socat/nginx stream)  ────────►  maglev.proxy.rlwy.net:59446
 porta fixa 443, TLS 1.2            L4: só encaminha TCP                    │
 sem SNI/Host                                                               ▼
                                                               idcloudServer :443
@@ -24,7 +24,7 @@ sem SNI/Host                                                               ▼
 Por que o VPS:
 
 - o REP-C conecta por **IPv4 literal** e **porta 443 fixa**;
-- o TCP Proxy da Railway expõe uma **porta aleatória** (ex.: `48331`), não 443;
+- o TCP Proxy da Railway expõe uma **porta aleatória** (ex.: `59446`), não 443;
 - o VPS recebe na 443 (porta que o REP aceita) e repassa para a porta do
   Railway. O VPS **não termina TLS** e não precisa de SNI/Host.
 
@@ -48,7 +48,7 @@ apt update && apt install -y socat
 Teste manual (deixe rodando e veja o log):
 
 ```bash
-socat -d -d TCP-LISTEN:443,fork,reuseaddr TCP:zephyr.proxy.rlwy.net:48331
+socat -d -d TCP-LISTEN:443,fork,reuseaddr TCP:maglev.proxy.rlwy.net:59446
 ```
 
 Em outro terminal, teste a porta:
@@ -86,7 +86,7 @@ o systemd e libera a 443):
 ```bash
 bash deploy/vps-relay.sh
 # ou, se o proxy mudar:
-bash deploy/vps-relay.sh zephyr.proxy.rlwy.net 48331
+bash deploy/vps-relay.sh maglev.proxy.rlwy.net 59446
 ```
 
 Se preferir manual, crie `/etc/systemd/system/izcloud-relay.service`:
@@ -97,7 +97,7 @@ Description=iZCloud L4 relay 443 -> Railway TCP proxy
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/socat -d -d TCP-LISTEN:443,fork,reuseaddr TCP:zephyr.proxy.rlwy.net:48331
+ExecStart=/usr/bin/socat -d -d TCP-LISTEN:443,fork,reuseaddr TCP:maglev.proxy.rlwy.net:59446
 Restart=always
 RestartSec=3
 LimitNOFILE=65535
@@ -136,7 +136,7 @@ IDCLOUD_KEY_PEM=<conteúdo da chave.pem>
 ```
 
 - O **TCP Proxy** da Railway deve apontar para a porta interna **443**
-  (ex.: `zephyr.proxy.rlwy.net:48331` → `443`).
+  (ex.: `maglev.proxy.rlwy.net:59446` → `8443`).
 
 Se ainda não tiver certificado, gere um self-signed (o REP não valida a CA):
 

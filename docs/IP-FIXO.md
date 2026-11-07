@@ -175,7 +175,7 @@ a Opção A (VPS) resolve por uma fração do custo.
 Railway → Public Networking → TCP Proxy:
 
 ```text
-zephyr.proxy.rlwy.net:48331  ──►  container:443 (idcloudServer)
+maglev.proxy.rlwy.net:59446  ──►  container:8443 (idcloudServer)
 ```
 
 O proxy é **L4 (TCP puro)**, então o REP pode falar TLS 1.2 sem SNI/Host. Isso
@@ -183,15 +183,15 @@ resolve o requisito de "sem SNI/Host". Mas **não resolve o REP-C sozinho**:
 
 - o REP-C conecta em **IPv4 literal** (não aceita hostname) e em **porta 443
   fixa** (o iDCloud do REP-C não tem campo de porta configurável);
-- o TCP Proxy da Railway expõe uma **porta aleatória** (`48331`), não 443; a
+- o TCP Proxy da Railway expõe uma **porta aleatória** (`59446`), não 443; a
   443 da Railway é a borda HTTP;
-- fixar `66.33.22.227` no REP também não resolve: a porta continua `48331`, e
+- fixar `66.33.22.251` no REP também não resolve: a porta continua `59446`, e
   o IP do proxy pode mudar.
 
 Caminho correto (o mesmo da Opção A):
 
 ```text
-REP-C (IP literal, 443) ──► VPS IP fixo:443 ──► zephyr.proxy.rlwy.net:48331 ──► idcloudServer:443
+REP-C (IP literal, 443) ──► VPS IP fixo:443 ──► maglev.proxy.rlwy.net:59446 ──► idcloudServer:8443
 ```
 
 O REP aponta para o **IP do VPS na 443**; o VPS só faz `socat`/`nginx stream`
