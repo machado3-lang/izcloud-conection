@@ -270,7 +270,12 @@ async function listarArquivosIdclass() {
     { titulo: 'Tamanho', valor: (r) => r.tamanho },
     { titulo: 'Criado', valor: (r) => r.criado_em, max: 19 },
   ]);
-  if (!rows.length) return;
+  if (!rows.length) {
+    console.log('\nNenhum arquivo AFD salvo ainda.');
+    console.log('Se o REP-C conectou, use a opcao 11 (coletas) e veja os logs');
+    console.log('[idcloud] na Railway (procure "coleta de", "AFD de" ou "aviso: AFD bruto").');
+    return;
+  }
   const id = Number(await perguntar('ID do arquivo para baixar (Enter = voltar): '));
   if (!id) return;
   const res = await api(`/api/afd/arquivos/${id}/download`, { raw: true });
@@ -335,6 +340,23 @@ async function cadastrarRep() {
   console.log('iZCloud localmente e use http://localhost:3100 neste script.');
 }
 
+async function verColetas() {
+  const rows = await api('/api/coletas');
+  console.log('\nEstado das coletas por REP:');
+  imprimirTabela(rows, [
+    { titulo: 'id_reps', valor: (r) => r.id_reps, max: 18 },
+    { titulo: 'Serial', valor: (r) => r.serial, max: 20 },
+    { titulo: 'Ultimo NSR', valor: (r) => r.ultimo_nsr },
+    { titulo: 'Batidas', valor: (r) => r.batidas },
+    { titulo: 'Total', valor: (r) => r.total_coletado },
+    { titulo: 'Coletas', valor: (r) => r.coletas },
+    { titulo: 'Ultima', valor: (r) => r.ultima_coleta, max: 19 },
+    { titulo: 'Erro', valor: (r) => r.ultimo_erro, max: 60 },
+  ]);
+  console.log('\nSe "Batidas" e "Ultimo NSR" estiverem preenchidos, o AFD entrou no');
+  console.log('banco (tabela afd). O arquivo bruto pode ter falhado em data/afd.');
+}
+
 async function status() {
   const h = await fetch(BASE + '/api/health').then((r) => r.json()).catch((e) => ({ erro: e.message }));
   console.log('\n/api/health:', JSON.stringify(h));
@@ -385,6 +407,7 @@ while (true) {
   console.log('8) Baixar AFD do iDClass (completo / NSR / data)');
   console.log('9) Listar/baixar arquivos AFD salvos');
   console.log('10) Cadastrar REP iDClass (REP-C)');
+  console.log('11) Ver estado das coletas (NSR, batidas, erro)');
   console.log('0) Sair');
   const op = await perguntar('Opcao: ', '0');
   try {
@@ -398,6 +421,7 @@ while (true) {
     else if (op === '8') await baixarAfdIdclass();
     else if (op === '9') await listarArquivosIdclass();
     else if (op === '10') await cadastrarRep();
+    else if (op === '11') await verColetas();
     else if (op === '0') break;
     else console.log('Opcao invalida.');
   } catch (e) {
