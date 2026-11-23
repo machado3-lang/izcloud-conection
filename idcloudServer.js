@@ -245,8 +245,20 @@ export async function baixarAfd(ctx, { limite = undefined, offset = 0 } = {}) {
   const corpo = { session: ctx.rep.session, offset };
   if (lim > 0) corpo.limit = lim;
   const r = await ctx.rep.pedir('get_afd', corpo, { binario: true });
-  const texto = (r.binario || '').trim();
-  if (!texto) return { texto: '', batidas: 0, linhas: 0, ultimoNsr: null, paginas: 0, truncado: false };
+
+  // O REP pode devolver o AFD de duas formas:
+  //   - texto puro (application/octet-stream) -> r.binario
+  //   - JSON {"afd":"..."} ou {"raw":"..."}   -> r.dados.afd/r.dados.raw
+  // O `repClient` ja aceitava as duas; o canal so olhava r.binario e por isso
+  // gravava 0 batidas em firmware que responde JSON.
+  const texto = String(r.binario || r.dados?.afd || r.dados?.raw || '').trim();
+  if (!texto) {
+    const erro = r.dados?.error || r.dados?.erro;
+    if (erro) throw new Error(`get_afd: ${erro}`);
+    log(`get_afd de ${ctx.rep.nSerie}: resposta vazia` +
+      (r.dados ? ` (${JSON.stringify(r.dados).slice(0, 200)})` : ' (sem corpo)'));
+    return { texto: '', batidas: 0, linhas: 0, ultimoNsr: null, paginas: 0, truncado: false };
+  }
   const linhas = texto.split(/\r?\n/).filter((l) => l.trim());
   const { registros } = parseAFD(texto);
   return {
@@ -264,7 +276,10 @@ export async function baixarAfd(ctx, { limite = undefined, offset = 0 } = {}) {
 // Baixa o AFD e grava no tenant. Devolve quantas batidas entraram.
 export async function sincronizarAfd(ctx, opcoes = {}) {
   const { texto, batidas, ultimoNsr } = await baixarAfd(ctx, opcoes);
-  if (!texto) return { batidas: 0, motivo: 'AFD vazio' };
+  if (!texto) {
+    log(`AFD de ${ctx.rep.nSerie}: vazio`);
+    return { batidas: 0, motivo: 'AFD vazio' };
+  }
   const client = new IdCloudClient(getTenantPool(ctx.schema));
   const novas = await client.salvarAfd(ctx.rep.nSerie, texto.split(/\r?\n/));
   log(`AFD de ${ctx.rep.nSerie}: ${batidas} batidas, ${novas} gravadas`);
@@ -325,6 +340,7 @@ export async function coletar(ctx, { limite = undefined } = {}) {
     const anterior = Number(est?.ultimo_nsr || 0);
     const { texto, batidas, ultimoNsr, truncado } = await baixarAfd(ctx, { limite, offset: 0 });
     if (!texto) {
+      log(`coleta de ${ctx.rep.nSerie}: AFD vazio (0 batidas)`);
       await registrarColetaRep(schema, { id_reps: ctx.id_reps, batidas: 0, novas: 0 });
       return { batidas: 0, novas: 0, vazio: true };
     }
