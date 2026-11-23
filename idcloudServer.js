@@ -139,7 +139,7 @@ export function decodificarChunked(buf) {
 }
 
 // Cliente FCGI que fala com um REP por uma conexao TLS ja aberta.
-class SessaoRep {
+export class SessaoRep {
   constructor(socket) {
     this.socket = socket;
     this.buffer = Buffer.alloc(0);
@@ -150,9 +150,31 @@ class SessaoRep {
     this.primeira = true;
     this.session = null;
     this.nSerie = null;
+    // Resposta delimitada por Connection: close (sem Content-Length/chunked):
+    // guarda o inicio do corpo e resolve quando o socket fechar.
+    this.aguardandoClose = null;
     socket.on('data', (d) => this._chegou(d));
-    socket.on('close', () => this._falhou('REP fechou a conexao'));
+    socket.on('close', () => this._fechou());
     socket.on('error', (e) => this._falhou(e.message));
+  }
+
+  _fechou() {
+    if (this.aguardandoClose) {
+      const { p, cab, inicio } = this.aguardandoClose;
+      this.aguardandoClose = null;
+      clearTimeout(p.timer);
+      const corpo = this.buffer.subarray(inicio).toString('utf-8');
+      const status = Number((/HTTP\/1\.\d\s+(\d+)/.exec(cab) || [])[1] || 0);
+      let dados = null, binario = null;
+      try { dados = JSON.parse(corpo); } catch { binario = corpo; }
+      if (status >= 400) {
+        p.rej(new Error((dados && dados.error) || `HTTP ${status}`));
+        return;
+      }
+      p.res({ dados, binario, status, cabecalho: cab });
+      return;
+    }
+    this._falhou('REP fechou a conexao');
   }
 
   _falhou(motivo) {
@@ -161,6 +183,8 @@ class SessaoRep {
 
   _chegou(d) {
     this.buffer = Buffer.concat([this.buffer, d]);
+    // Corpo delimitado por close: so acumula ate o socket fechar.
+    if (this.aguardandoClose) return;
     while (this.buffer.length) {
       // O REP mistura \n e \r\n nos headers (medido na captura), entao aceito os
       // dois terminadores. Sem isso a resposta nunca "fecha" e tudo da timeout.
@@ -172,6 +196,16 @@ class SessaoRep {
       const chunked = /transfer-encoding:\s*chunked/i.test(cab);
       const m = /content-length:\s*(\d+)/i.exec(cab);
       const total = Number(m ? m[1] : 0);
+
+      // Sem Content-Length e sem chunked: o corpo vai ate o close.
+      if (!m && !chunked) {
+        const p = this.pendente;
+        if (!p) { this.buffer = Buffer.alloc(0); break; }
+        this.pendente = null;
+        this.aguardandoClose = { p, cab, inicio: fim + salto };
+        return;
+      }
+
       let corpo;
       let consumir;
       if (chunked) {
