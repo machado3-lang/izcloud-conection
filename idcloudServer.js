@@ -99,6 +99,45 @@ async function resolverVaga(nSerie) {
   return { ...achado, ate: Date.now() + 60 * 1000 };
 }
 
+// Decodifica um corpo HTTP em Transfer-Encoding: chunked.
+// Retorna { completo:false } enquanto o ultimo chunk nao chegou.
+function fimLinha(buf, pos) {
+  const rn = buf.indexOf('\r\n', pos);
+  const n = buf.indexOf('\n', pos);
+  if (rn < 0 && n < 0) return null;
+  if (rn >= 0 && (n < 0 || rn <= n)) return { fim: rn, salto: 2 };
+  return { fim: n, salto: 1 };
+}
+
+export function decodificarChunked(buf) {
+  let pos = 0;
+  const partes = [];
+  while (true) {
+    const l = fimLinha(buf, pos);
+    if (!l) return { completo: false };
+    const linha = buf.subarray(pos, l.fim).toString('latin1').trim();
+    const tam = parseInt(linha.split(';')[0], 16);
+    if (!Number.isFinite(tam)) return { completo: false };
+    pos = l.fim + l.salto;
+    if (tam === 0) {
+      // Fim dos chunks. Pode haver trailer (ou so a linha vazia final).
+      const t = fimLinha(buf, pos);
+      if (!t) return { completo: false };
+      return {
+        completo: true,
+        texto: Buffer.concat(partes).toString('utf-8'),
+        consumido: t.fim + t.salto,
+      };
+    }
+    if (buf.length < pos + tam) return { completo: false };
+    partes.push(buf.subarray(pos, pos + tam));
+    pos += tam;
+    const l2 = fimLinha(buf, pos);
+    if (!l2) return { completo: false };
+    pos = l2.fim + l2.salto;
+  }
+}
+
 // Cliente FCGI que fala com um REP por uma conexao TLS ja aberta.
 class SessaoRep {
   constructor(socket) {
@@ -130,11 +169,22 @@ class SessaoRep {
       if (fim < 0) { fim = this.buffer.indexOf('\n\n'); salto = 2; }
       if (fim < 0) break;
       const cab = this.buffer.subarray(0, fim).toString('latin1');
+      const chunked = /transfer-encoding:\s*chunked/i.test(cab);
       const m = /content-length:\s*(\d+)/i.exec(cab);
       const total = Number(m ? m[1] : 0);
-      if (this.buffer.length < fim + salto + total) break;
-      const corpo = this.buffer.subarray(fim + salto, fim + salto + total).toString('utf-8');
-      this.buffer = this.buffer.subarray(fim + salto + total);
+      let corpo;
+      let consumir;
+      if (chunked) {
+        const dec = decodificarChunked(this.buffer.subarray(fim + salto));
+        if (!dec.completo) break;
+        corpo = dec.texto;
+        consumir = fim + salto + dec.consumido;
+      } else {
+        if (this.buffer.length < fim + salto + total) break;
+        corpo = this.buffer.subarray(fim + salto, fim + salto + total).toString('utf-8');
+        consumir = fim + salto + total;
+      }
+      this.buffer = this.buffer.subarray(consumir);
       const status = Number((/HTTP\/1\.\d\s+(\d+)/.exec(cab) || [])[1] || 0);
       const p = this.pendente;
       if (!p) continue;                       // resposta sem pedido: descarta
@@ -143,7 +193,7 @@ class SessaoRep {
       let dados = null, binario = null;
       try { dados = JSON.parse(corpo); } catch { binario = corpo; }
       if (status >= 400) { p.rej(new Error((dados && dados.error) || `HTTP ${status}`)); continue; }
-      p.res({ dados, binario, status });
+      p.res({ dados, binario, status, cabecalho: cab });
     }
   }
 
@@ -242,7 +292,8 @@ export async function baixarAfd(ctx, { limite = undefined, offset = 0 } = {}) {
   const lim = limite === undefined
     ? limiteAfdPadrao()
     : Math.min(Math.max(Number(limite) || 0, 0), LIMITE_AFD_MAX);
-  const corpo = { session: ctx.rep.session, offset };
+  const corpo = { session: ctx.rep.session };
+  if (Number(offset) > 0) corpo.offset = Number(offset);
   if (lim > 0) corpo.limit = lim;
   const r = await ctx.rep.pedir('get_afd', corpo, { binario: true });
 
@@ -256,7 +307,8 @@ export async function baixarAfd(ctx, { limite = undefined, offset = 0 } = {}) {
     const erro = r.dados?.error || r.dados?.erro;
     if (erro) throw new Error(`get_afd: ${erro}`);
     log(`get_afd de ${ctx.rep.nSerie}: resposta vazia` +
-      (r.dados ? ` (${JSON.stringify(r.dados).slice(0, 200)})` : ' (sem corpo)'));
+      (r.dados ? ` (${JSON.stringify(r.dados).slice(0, 200)})` : ' (sem corpo)') +
+      (r.cabecalho ? ` [${String(r.cabecalho).replace(/\s+/g, ' ').slice(0, 300)}]` : ''));
     return { texto: '', batidas: 0, linhas: 0, ultimoNsr: null, paginas: 0, truncado: false };
   }
   const linhas = texto.split(/\r?\n/).filter((l) => l.trim());
