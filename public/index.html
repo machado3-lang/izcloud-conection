@@ -423,7 +423,8 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
 
         <div class="glass-card" style="margin-top:1.5rem;">
           <h3><span id="h-sync2"></span> Importar / enviar (usa o REP selecionado acima)</h3>
-          <p class="muted" style="margin-bottom:12px;">O iZCloud lê a empresa, os funcionários e a biometria que já estão na memória do REP. Usa o IP, a porta e a senha salvos no cadastro do equipamento — não precisa redigitar.</p>
+          <p class="muted" style="margin-bottom:12px;">O iZCloud lê a empresa, os funcionários e a biometria que já estão na memória do REP. Usa o IP, a porta e a senha salvos no cadastro do equipamento - não precisa redigitar.</p>
+          <p class="muted" style="margin-bottom:12px;"><b>No modo rep_empurra</b> (canal iDCloud), a importação é automática quando o REP conecta; este botão por IP/porta só funciona no modo <b>nuvem_puxa</b>. Para copiar o empregador do REP para o perfil da empresa, use <b>Vincular empresa</b> na aba REPs.</p>
           <div class="row" style="align-items:center;margin-top:14px;">
             <button class="btn-primary" id="s_import" type="button">Importar empresa e funcionários do REP</button>
             <button class="btn-primary" id="s_push" type="button">Enviar vinculados ao REP</button>
@@ -1092,15 +1093,39 @@ async function loadReps() {
   try {
     const rows = await api('/api/reps');
     if (!rows.length) { box.innerHTML = '<p class="muted">Nenhum REP cadastrado.</p>'; return; }
-    box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr><th>ID</th><th>Nome</th><th>IP:Porta</th><th>Tipo</th><th>Modo</th><th>Pessoas</th><th>Digitais</th><th>Importar</th></tr></thead><tbody>' +
+    box.innerHTML = '<p class="muted" style="margin-bottom:8px;">No modo <b>rep_empurra</b>, a empresa/funcionários são importados automaticamente quando o REP conecta (canal iDCloud). Use <b>Vincular empresa</b> para copiar o empregador do REP para o perfil da empresa.</p>' +
+      '<div class="data-table-container"><table class="data-table"><thead><tr><th>ID</th><th>Nome</th><th>IP:Porta</th><th>Tipo</th><th>Modo</th><th>Pessoas</th><th>Digitais</th><th>Empregador</th><th>Ações</th></tr></thead><tbody>' +
       rows.map(r => {
         const modo = r.ModoConexao || 'nuvem_puxa';
         const modoPill = modo === 'rep_empurra' ? '<span class="pill am">rep_empurra</span>' : '<span class="pill c">nuvem_puxa</span>';
+        const empregador = r.Empregador
+          ? `<b>${r.Empregador}</b><div class="muted" style="font-size:.72rem">${r.EmpregadorDoc || '-'}</div>`
+          : '<span class="muted">não importado</span>';
+        const acaoImportar = modo === 'rep_empurra'
+          ? '<span class="muted" title="O canal iDCloud ja importa empresa/funcionarios na conexao do REP">canal automático</span>'
+          : `<button class="btn-ghost" type="button" data-import="${r.id_Equipamento}" title="Le empresa/funcionarios do iDClass por IP/porta.">Importar</button>`;
+        const acaoVincular = r.Empregador
+          ? `<button class="btn-ghost" type="button" data-vincular="${r.id_Equipamento}" title="Copia o empregador do REP para o perfil desta empresa">Vincular empresa</button>`
+          : '';
         return `<tr><td>${r.id_Equipamento}</td><td><b>${r.Nome || '-'}</b>
           <div class="muted" style="font-size:.72rem">série ${r.Serial || '-'}</div></td>
           <td>${r.IpAddress || '-'}:${r.Porta ?? '-'}</td><td>${r.REPType ? `<span class="pill c">${r.REPType}</span>` : '-'}</td><td>${modoPill}</td><td>${r.qtdePessoas ?? '-'}</td><td>${r.qtdeDigitais ?? '-'}</td>
-          <td><button class="btn-ghost" type="button" data-import="${r.id_Equipamento}" title="Lê empresa/funcionários do iDClass. Para iDFace, use a aba AFD > Importar arquivo AFD.">Importar</button></td></tr>`;
+          <td>${empregador}</td><td>${acaoVincular} ${acaoImportar}</td></tr>`;
       }).join('') + '</tbody></table></div>';
+    box.querySelectorAll('button[data-vincular]').forEach((b) => {
+      b.onclick = async () => {
+        const id = b.dataset.vincular;
+        b.disabled = true; b.textContent = 'Vinculando...';
+        try {
+          const r = await api('/api/reps/' + id + '/vincular-empresa', { method: 'POST', body: JSON.stringify({}) });
+          toast('Empresa vinculada: ' + (r.empregador?.RazaoSocial || r.empregador?.CNPJ_CPF || ''), 'success');
+          await loadReps(); await carregarPainel();
+        } catch (e) {
+          toast(e.message, 'error');
+          b.disabled = false; b.textContent = 'Vincular empresa';
+        }
+      };
+    });
     box.querySelectorAll('button[data-import]').forEach((b) => {
       b.onclick = async () => {
         const id = b.dataset.import;

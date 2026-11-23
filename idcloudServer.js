@@ -436,26 +436,29 @@ export async function coletar(ctx, { limite = undefined } = {}) {
     const novas = await client.salvarAfd(ctx.rep.nSerie, texto.split(/\r?\n/), { desdeNsr: anterior });
 
     // Guarda o AFD bruto (header + tipo 3 + trailer) para o cliente baixar
-    // depois. Nao pode derrubar a coleta: se o disco falhar, as batidas ja
-    // estao no banco.
-    try {
-      const linhasAfd = texto.split(/\r?\n/).filter((l) => l.trim());
-      const primeira = linhasAfd.find((l) => l[9] === '3');
-      const formato = primeira ? detectarTipo(primeira) : '1510';
-      const nsrs = linhasAfd.filter((l) => l[9] === '3')
-        .map((l) => parseInt(l.substring(0, 9), 10)).filter(Number.isFinite);
-      await salvarArquivoAfd(getTenantPool(schema), {
-        schema,
-        origem: 'idclass',
-        formato: formato === '671' ? '671' : '595',
-        serial: ctx.rep.nSerie,
-        idEquipamento: ctx.id_reps,
-        texto,
-        nsrInicial: nsrs.length ? Math.min(...nsrs) : null,
-        nsrFinal: nsrs.length ? Math.max(...nsrs) : null,
-      });
-    } catch (e) {
-      log(`aviso: AFD bruto de ${ctx.rep.nSerie} nao foi salvo: ${e.message}`);
+    // depois. So salva quando entrou NSR novo (ou no primeiro contato): sem
+    // isso cada reconexao do REP gerava um arquivo identico (1,5 MB cada).
+    // Nao pode derrubar a coleta: se o disco falhar, as batidas ja estao no banco.
+    if (novas > 0 || anterior === 0) {
+      try {
+        const linhasAfd = texto.split(/\r?\n/).filter((l) => l.trim());
+        const primeira = linhasAfd.find((l) => l[9] === '3');
+        const formato = primeira ? detectarTipo(primeira) : '1510';
+        const nsrs = linhasAfd.filter((l) => l[9] === '3')
+          .map((l) => parseInt(l.substring(0, 9), 10)).filter(Number.isFinite);
+        await salvarArquivoAfd(getTenantPool(schema), {
+          schema,
+          origem: 'idclass',
+          formato: formato === '671' ? '671' : '595',
+          serial: ctx.rep.nSerie,
+          idEquipamento: ctx.id_reps,
+          texto,
+          nsrInicial: nsrs.length ? Math.min(...nsrs) : null,
+          nsrFinal: nsrs.length ? Math.max(...nsrs) : null,
+        });
+      } catch (e) {
+        log(`aviso: AFD bruto de ${ctx.rep.nSerie} nao foi salvo: ${e.message}`);
+      }
     }
 
     const avancou = !ultimoNsr || !anterior || Number(ultimoNsr) > anterior;

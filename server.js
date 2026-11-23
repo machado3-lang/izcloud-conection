@@ -741,6 +741,54 @@ app.post('/api/reps/:id/importar', async (req, res) => {
   } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
+// Copia o empregador que o canal iDCloud importou do REP para o perfil da
+// empresa no core. E' o caminho remoto (rep_empurra): nao depende de alcancar
+// o IP do REP. O canal ja gravou `empregadores` e `equipamentos.id_Empregador`.
+app.post('/api/reps/:id/vincular-empresa', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) throw new Error('REP invalido');
+    const [rows] = await req.db.query(
+      `SELECT q.id_Equipamento, q.Serial,
+              e.id_Empregador, e.RazaoSocial, e.Local, e.CNPJ_CPF, e.CEI
+         FROM equipamentos q
+         LEFT JOIN empregadores e ON e.id_Empregador = q.id_Empregador
+        WHERE q.id_Equipamento = ?`, [id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'REP nao encontrado' });
+    const r = rows[0];
+    const razao = r.RazaoSocial || null;
+    const doc = String(r.CNPJ_CPF || '').replace(/\D/g, '') || null;
+    if (!razao && !doc) {
+      return res.status(400).json({
+        error: 'O REP ainda nao tem empregador importado. Conecte o REP pelo canal (rep_empurra) para importar.',
+      });
+    }
+    const tipo = doc && doc.length === 11 ? 'CPF' : 'CNPJ';
+    await getCorePool().query(
+      `UPDATE clientes SET
+         razao_social = COALESCE(?, razao_social),
+         nome_empresa = COALESCE(nome_empresa, ?),
+         cnpj = COALESCE(?, cnpj),
+         cei = COALESCE(?, cei),
+         tipo_documento = ?
+       WHERE id_cliente = ?`,
+      [razao, razao, doc, r.CEI || null, tipo, req.tenant.empresa_id]
+    );
+    res.json({
+      ok: true,
+      empregador: {
+        id_Empregador: r.id_Empregador,
+        RazaoSocial: razao,
+        Local: r.Local,
+        CNPJ_CPF: doc,
+        CEI: r.CEI,
+        tipo_documento: tipo,
+      },
+    });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
 app.get('/api/reps', async (req, res) => {
   try { res.json(await new IdCloudClient(req.db).listarEquipamentos()); }
   catch (e) { res.status(502).json({ error: e.message }); }

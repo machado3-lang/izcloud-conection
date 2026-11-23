@@ -40,6 +40,23 @@ export async function salvarArquivoAfd(pool, {
   dataFim = null,
 } = {}) {
   const conteudo = String(texto || '');
+  const sha256 = crypto.createHash('sha256').update(conteudo, 'latin1').digest('hex');
+  const tamanho = Buffer.byteLength(conteudo, 'latin1');
+
+  // Nao grava o mesmo conteudo duas vezes para o mesmo equipamento/dispositivo.
+  // O canal reconecta varias vezes e o AFD completo pode ser identico.
+  if (idEquipamento || idDispositivo) {
+    const [ex] = await pool.query(
+      `SELECT id, origem, formato, serial, id_Equipamento, id_dispositivo,
+              nome, caminho, sha256, tamanho, criado_em
+         FROM afd_arquivos
+        WHERE sha256 = ? AND (id_Equipamento = ? OR id_dispositivo = ?)
+        ORDER BY id DESC LIMIT 1`,
+      [sha256, idEquipamento, idDispositivo]
+    );
+    if (ex.length) return ex[0];
+  }
+
   const dir = dirDoTenant(schema);
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
   const base = nome
@@ -49,9 +66,6 @@ export async function salvarArquivoAfd(pool, {
   // AFD e' ISO-8859-1 (Portaria). Gravar em latin1 preserva os bytes originais;
   // gravar em utf8 mudaria acentos do campo razao social.
   fs.writeFileSync(arquivo, conteudo, 'latin1');
-
-  const sha256 = crypto.createHash('sha256').update(conteudo, 'latin1').digest('hex');
-  const tamanho = Buffer.byteLength(conteudo, 'latin1');
 
   const [res] = await pool.query(
     `INSERT INTO afd_arquivos
