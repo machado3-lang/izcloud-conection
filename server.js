@@ -614,6 +614,7 @@ app.post(['/api/idface/:schema/:token/result', '/api/idface/:token/result'], asy
 // req.tenant chegavam undefined e as duas rotas respondiam 502 em producao.
 app.use('/api/reps', authTenant);
 app.use('/api/pessoas', authTenant);
+app.use('/api/empregadores', authTenant);
 app.use('/api/afd', authTenant);
 app.use('/api/idface', authTenant);
 app.use('/api/painel', authTenant);
@@ -666,7 +667,7 @@ app.post('/api/reps/probe', async (req, res) => {
 
 app.post('/api/reps', async (req, res) => {
   try {
-    const { id_Equipamento, Serial, serial, Nome, IpAddress, Porta, Passcode, REPType, ModoConexao } = req.body;
+    const { id_Equipamento, Serial, serial, Nome, IpAddress, Porta, Passcode, REPType, ModoConexao, id_Empregador } = req.body;
     // No contrato iDCloud o REP se reconhece lendo `equipamentos` e casando
     // id_Equipamento com a propria identidade. Logo o id tem que ser o que o
     // APARELHO reportou no get_about (nSerie), nunca um numero escolhido na tela.
@@ -681,11 +682,12 @@ app.post('/api/reps', async (req, res) => {
     const client = new IdCloudClient(req.db);
     await client.pool.query(
       `INSERT INTO equipamentos
-       (id_Equipamento, Serial, Nome, IpAddress, Porta, Passcode, REPType, ModoConexao, DataAtualizacao)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+       (id_Equipamento, Serial, Nome, IpAddress, Porta, Passcode, REPType, ModoConexao, id_Empregador, DataAtualizacao)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
        ON DUPLICATE KEY UPDATE Serial=VALUES(Serial), Nome=VALUES(Nome), IpAddress=VALUES(IpAddress),
-         Porta=VALUES(Porta), Passcode=VALUES(Passcode), REPType=VALUES(REPType), ModoConexao=VALUES(ModoConexao)`,
-      [id, serialTexto || String(id), Nome, IpAddress, Porta, Passcode, REPType, ModoConexao || 'nuvem_puxa']
+         Porta=VALUES(Porta), Passcode=VALUES(Passcode), REPType=VALUES(REPType), ModoConexao=VALUES(ModoConexao),
+         id_Empregador=COALESCE(VALUES(id_Empregador), id_Empregador)`,
+      [id, serialTexto || String(id), Nome, IpAddress, Porta, Passcode, REPType, ModoConexao || 'nuvem_puxa', id_Empregador || null]
     );
     res.json({ ok: true, id_Equipamento: id, serial: serialTexto || String(id) });
   } catch (e) { res.status(400).json({ error: e.message }); }
@@ -807,10 +809,66 @@ app.put('/api/reps/:id/funcionarios', async (req, res) => {
   } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
+// ---------- Empregadores (multi-empregador por tenant) ----------
+// Um tenant pode ter N empregadores; cada empregador pode ter N REPs
+// (equipamentos.id_Empregador) e N funcionarios (pessoas.id_Empregador).
+app.get('/api/empregadores', async (req, res) => {
+  try { res.json(await new IdCloudClient(req.db).listarEmpregadores()); }
+  catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+app.post('/api/empregadores', async (req, res) => {
+  try { res.status(201).json(await new IdCloudClient(req.db).gravarEmpregador(req.body || {})); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.put('/api/empregadores/:id', async (req, res) => {
+  try {
+    const r = await new IdCloudClient(req.db).atualizarEmpregador(req.params.id, req.body || {});
+    res.json(r);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.delete('/api/empregadores/:id', async (req, res) => {
+  try { res.json(await new IdCloudClient(req.db).removerEmpregador(req.params.id)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.get('/api/empregadores/:id/pessoas', async (req, res) => {
+  try {
+    res.json(await new IdCloudClient(req.db).listarPessoasDoEmpregador(req.params.id));
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+app.get('/api/empregadores/:id/reps', async (req, res) => {
+  try {
+    const client = new IdCloudClient(req.db);
+    const [rows] = await client.pool.query(
+      `SELECT id_Equipamento, COALESCE(Serial, CAST(id_Equipamento AS CHAR)) AS Serial,
+              Nome, REPType, ModoConexao, IpAddress, Porta
+         FROM equipamentos WHERE id_Empregador = ? ORDER BY Nome`, [Number(req.params.id)]
+    );
+    res.json(rows);
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Define/atualiza o empregador de um REP (um empregador -> N REPs).
+app.put('/api/reps/:id/empregador', async (req, res) => {
+  try {
+    const r = await new IdCloudClient(req.db).definirEmpregadorDoRep(
+      req.params.id, req.body?.id_Empregador || null
+    );
+    res.json(r);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 // ---------- Pessoas (escopo do tenant) ----------
 app.get('/api/pessoas', async (req, res) => {
-  try { res.json(await new IdCloudClient(req.db).listarPessoas()); }
-  catch (e) { res.status(502).json({ error: e.message }); }
+  try {
+    res.json(await new IdCloudClient(req.db).listarPessoas({
+      idEmpregador: req.query.id_Empregador || null,
+    }));
+  } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
 // Todos os vinculos pessoa<->equipamento do tenant
@@ -870,18 +928,28 @@ app.post('/api/pessoas/sincronizar', async (req, res) => {
       }
     }
     if (!ip) throw new Error('REP sem IP cadastrado');
-    const [vin] = await client.pool.query('SELECT id_Pessoa FROM equip_pessoa WHERE id_Equipamento = ?', [idEquipamento]);
+    // Envio INCREMENTAL: so quem nunca foi enviado (UltimoEnvio NULL) ou mudou
+    // depois do ultimo envio (pessoas.DataAtualizacao > equip_pessoa.UltimoEnvio).
+    const [vin] = await client.pool.query(
+      `SELECT ep.id_Pessoa, p.PIS, p.CPF, p.Nome, p.Codigo, p.Senha, p.Matricula
+         FROM equip_pessoa ep
+         JOIN pessoas p ON p.id_pessoa = ep.id_Pessoa
+        WHERE ep.id_Equipamento = ?
+          AND p.ExcluidoDefinitivo = 0
+          AND (ep.UltimoEnvio IS NULL OR p.DataAtualizacao > ep.UltimoEnvio)`,
+      [idEquipamento]
+    );
+    if (!vin.length) {
+      return res.json({ ok: true, enviados: 0, pendentes: 0, motivo: 'sem alteracao' });
+    }
     const users = [];
-    for (const { id_Pessoa } of vin) {
-      const [p] = await client.pool.query('SELECT id_pessoa, PIS, CPF, Nome, Codigo, Senha, Matricula FROM pessoas WHERE id_pessoa = ?', [id_Pessoa]);
-      if (!p.length) continue;
-      const pes = p[0];
+    for (const pes of vin) {
       const u = {
         pis: pes.PIS, cpf: pes.CPF, name: pes.Nome,
         registration: pes.Matricula || pes.Codigo || 0, code: pes.Codigo || 0,
         password: pes.Senha || '1234',
       };
-      const [tpl] = await client.pool.query('SELECT tipo, indice, dados FROM templates WHERE id_pessoa = ?', [id_Pessoa]);
+      const [tpl] = await client.pool.query('SELECT tipo, indice, dados FROM templates WHERE id_pessoa = ?', [pes.id_Pessoa]);
       u.templates = tpl.filter(t => t.tipo === 'digital').map(t => ({ finger: t.indice, template: t.dados }));
       u.facial = tpl.filter(t => t.tipo === 'face').map(t => ({ faceTemplate: t.dados }));
       users.push(u);
@@ -889,6 +957,7 @@ app.post('/api/pessoas/sincronizar', async (req, res) => {
     const portaria = users.some(u => u.cpf) ? '671' : '1510';
     const r = await enviarUsuarios(ip, porta || 443, users, portaria,
       usuario || 'admin', senha || process.env.REP_ADMIN_SENHA || 'admin');
+    await client.marcarEnviados(idEquipamento, vin.map(v => v.id_Pessoa));
     res.json({ ok: true, enviados: users.length, rep: r });
   } catch (e) { res.status(502).json({ error: e.message }); }
 });
@@ -932,6 +1001,11 @@ app.post('/api/pessoas', async (req, res) => {
         // de novo e duplicar; a UI avisa que o envio ficou pendente.
         erroEnvio = e.message;
       }
+    }
+    // Se o envio deu certo, marca como enviado; senao fica pendente para o
+    // proximo "Enviar vinculados" (que so manda o que mudou).
+    if (enviado && idEquipamento) {
+      await client.marcarEnviados(Number(idEquipamento), [id]);
     }
     res.json({ idNuvem: id, enviado: !!enviado, erroEnvio, rep: enviado });
   } catch (e) { res.status(400).json({ error: e.message }); }

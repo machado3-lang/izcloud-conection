@@ -30,13 +30,16 @@ CREATE TABLE IF NOT EXISTS equipamentos (
 );
 
 -- Empregador (a razao social que o REP exibe no ticket).
+-- Um tenant pode ter VARIOS empregadores; cada empregador pode ter varios REPs
+-- (equipamentos.id_Empregador) e varios funcionarios (pessoas.id_Empregador).
 CREATE TABLE IF NOT EXISTS empregadores (
   id_Empregador INT AUTO_INCREMENT PRIMARY KEY,
   RazaoSocial VARCHAR(50),
   Local VARCHAR(100),
   CNPJ_CPF VARCHAR(20),
   CEI VARCHAR(20),
-  CPF VARCHAR(20)
+  CPF VARCHAR(20),
+  DataAtualizacao DATETIME
 );
 
 -- Departamentos: filtro de para quem o REP envia cada pessoa.
@@ -77,9 +80,11 @@ CREATE TABLE IF NOT EXISTS pessoas (
   ExcluidoDefinitivo BIT DEFAULT 0,
   DataAtualizacao DATETIME,
   id_departamento INT,
+  id_Empregador INT,
   INDEX idx_pis (PIS),
   INDEX idx_cpf (CPF),
   INDEX idx_dep (id_departamento),
+  INDEX idx_empregador (id_Empregador),
   INDEX idx_atualizacao (DataAtualizacao),
   -- Regra do Inmetro citada na doc do iDCloud: "nao deve existir dois cartoes
   -- (RFID) na tabela pessoas com o mesmo numero". Varios NULL sao permitidos
@@ -91,10 +96,13 @@ CREATE TABLE IF NOT EXISTS pessoas (
 -- aplicarMigracoesTenant() em core.js - ele so cria se nao houver duplicados, e
 -- avisa no log caso haja, em vez de falhar.
 
--- Vinculo pessoa x equipamento
+-- Vinculo pessoa x equipamento (muitos-para-muitos).
+-- UltimoEnvio e' o cursor de envio: so mandamos ao REP quem nunca foi enviado
+-- (NULL) ou quem mudou depois (pessoas.DataAtualizacao > UltimoEnvio).
 CREATE TABLE IF NOT EXISTS equip_pessoa (
   id_Pessoa INT,
   id_Equipamento BIGINT,
+  UltimoEnvio DATETIME NULL,
   PRIMARY KEY (id_Pessoa, id_Equipamento)
 );
 

@@ -118,6 +118,7 @@ export class IdCloudClient {
       p.admin ? 1 : 0,
       p.rfid || null,
       p.barras || null,
+      p.id_Empregador || null,
     ];
     if (docs) {
       const col = is671 ? 'CPF' : 'PIS';
@@ -127,7 +128,8 @@ export class IdCloudClient {
       if (ex.length) {
         await this.pool.query(
           `UPDATE pessoas SET Nome=?, Codigo=?, Senha=COALESCE(?, Senha), Matricula=?, Admin=?,
-                  Rfid=COALESCE(?, Rfid), Barras=COALESCE(?, Barras), DataAtualizacao=NOW()
+                  Rfid=COALESCE(?, Rfid), Barras=COALESCE(?, Barras),
+                  id_Empregador=COALESCE(?, id_Empregador), DataAtualizacao=NOW()
             WHERE id_pessoa=?`,
           [...campos, ex[0].id_pessoa]
         );
@@ -135,8 +137,9 @@ export class IdCloudClient {
       }
     }
     const sql = `INSERT INTO pessoas
-      (PIS, CPF, Nome, Codigo, Senha, Matricula, Admin, Rfid, Barras, Excluido, ExcluidoDefinitivo, DataAtualizacao)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NOW())`;
+      (PIS, CPF, Nome, Codigo, Senha, Matricula, Admin, Rfid, Barras, id_Empregador,
+       Excluido, ExcluidoDefinitivo, DataAtualizacao)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NOW())`;
     const params = [
       is671 ? null : (p.pis || null),
       is671 ? (p.cpf || null) : null,
@@ -146,11 +149,16 @@ export class IdCloudClient {
     return res.insertId;
   }
 
-  // Vincula pessoa ao equipamento (tabela equip_pessoa)
-  async vincularEquipamento(idPessoa, idEquipamento) {
+  // Vincula pessoa ao equipamento (tabela equip_pessoa).
+  // `enviado: true` marca UltimoEnvio=NOW() (importado do REP: ele ja tem a
+  // pessoa, nao precisa reenviar). O padrao NULL deixa pendente para o proximo
+  // "Enviar vinculados".
+  async vincularEquipamento(idPessoa, idEquipamento, { enviado = false } = {}) {
     await this.pool.query(
-      'INSERT IGNORE INTO equip_pessoa (id_Pessoa, id_Equipamento) VALUES (?, ?)',
-      [idPessoa, idEquipamento]
+      `INSERT INTO equip_pessoa (id_Pessoa, id_Equipamento, UltimoEnvio)
+       VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE id_Pessoa = id_Pessoa`,
+      [idPessoa, idEquipamento, enviado ? new Date() : null]
     );
   }
 
@@ -163,17 +171,25 @@ export class IdCloudClient {
     );
   }
 
-  // Lista funcionarios (pessoas) do tenant
-  async listarPessoas() {
-    const [rows] = await this.pool.query(
-      'SELECT id_pessoa, PIS, CPF, Nome, Codigo, Matricula, Admin FROM pessoas ORDER BY Nome'
-    );
+  // Lista funcionarios (pessoas) do tenant, com o empregador.
+  async listarPessoas({ idEmpregador = null } = {}) {
+    let sql = `SELECT p.id_pessoa, p.PIS, p.CPF, p.Nome, p.Codigo, p.Matricula, p.Admin,
+                      p.id_Empregador, e.RazaoSocial AS Empregador
+                 FROM pessoas p
+                 LEFT JOIN empregadores e ON e.id_Empregador = p.id_Empregador
+                WHERE p.ExcluidoDefinitivo = 0`;
+    const params = [];
+    if (idEmpregador) { sql += ' AND p.id_Empregador = ?'; params.push(Number(idEmpregador)); }
+    sql += ' ORDER BY p.Nome';
+    const [rows] = await this.pool.query(sql, params);
     return rows;
   }
 
   // Todos os vinculos pessoa<->equipamento (muitos-para-muitos via equip_pessoa)
   async listarTodosVinculos() {
-    const [rows] = await this.pool.query('SELECT id_Pessoa, id_Equipamento FROM equip_pessoa');
+    const [rows] = await this.pool.query(
+      'SELECT id_Pessoa, id_Equipamento, UltimoEnvio FROM equip_pessoa'
+    );
     return rows;
   }
 
@@ -185,14 +201,65 @@ export class IdCloudClient {
     return rows.map(r => r.id_Pessoa);
   }
 
-  // Define o SUBSET de funcionarios de um REP (substitui o conjunto atual)
+  // Define o SUBSET de funcionarios de um REP (substitui o conjunto atual).
+  // Preserva UltimoEnvio dos vinculos que continuam: so os novos ficam NULL
+  // (pendentes de envio). Sem isso, salvar a tela reenviaria todo mundo.
   async definirVinculos(idEquipamento, ids) {
-    await this.pool.query('DELETE FROM equip_pessoa WHERE id_Equipamento = ?', [idEquipamento]);
-    for (const id of (ids || [])) {
-      if (id) await this.pool.query(
-        'INSERT IGNORE INTO equip_pessoa (id_Pessoa, id_Equipamento) VALUES (?, ?)', [id, idEquipamento]
+    const lista = (ids || []).map(Number).filter(Boolean);
+    // Um REP pertence a um empregador; so podemos vincular funcionarios desse
+    // empregador (ou ainda sem empregador). Sem isso, a tela deixaria misturar
+    // funcionarios de empregadores diferentes no mesmo REP.
+    const [[rep]] = await this.pool.query(
+      'SELECT id_Empregador FROM equipamentos WHERE id_Equipamento = ?', [idEquipamento]
+    );
+    const idEmp = rep?.id_Empregador || null;
+    if (idEmp && lista.length) {
+      const marcas = lista.map(() => '?').join(',');
+      const [outros] = await this.pool.query(
+        `SELECT Nome FROM pessoas
+          WHERE id_pessoa IN (${marcas})
+            AND id_Empregador IS NOT NULL AND id_Empregador <> ?`,
+        [...lista, idEmp]
+      );
+      if (outros.length) {
+        throw new Error('Funcionarios de outro empregador: ' + outros.map(o => o.Nome).join(', '));
+      }
+      // Quem ainda nao tem empregador passa a pertencer ao empregador do REP.
+      await this.pool.query(
+        `UPDATE pessoas SET id_Empregador = ?
+          WHERE id_pessoa IN (${marcas}) AND id_Empregador IS NULL`,
+        [idEmp, ...lista]
       );
     }
+    if (!lista.length) {
+      await this.pool.query('DELETE FROM equip_pessoa WHERE id_Equipamento = ?', [idEquipamento]);
+      return;
+    }
+    const marcas = lista.map(() => '?').join(',');
+    await this.pool.query(
+      `DELETE FROM equip_pessoa
+        WHERE id_Equipamento = ? AND id_Pessoa NOT IN (${marcas})`,
+      [idEquipamento, ...lista]
+    );
+    for (const id of lista) {
+      await this.pool.query(
+        `INSERT IGNORE INTO equip_pessoa (id_Pessoa, id_Equipamento, UltimoEnvio)
+         VALUES (?, ?, NULL)`,
+        [id, idEquipamento]
+      );
+    }
+  }
+
+  // Marca os funcionarios como enviados ao REP (cursor do envio incremental).
+  async marcarEnviados(idEquipamento, ids) {
+    const lista = (ids || []).map(Number).filter(Boolean);
+    if (!lista.length) return;
+    const marcas = lista.map(() => '?').join(',');
+    await this.pool.query(
+      `UPDATE equip_pessoa SET UltimoEnvio = NOW()
+        WHERE id_Equipamento = ? AND id_Pessoa IN (${marcas})`,
+      [idEquipamento, ...lista]
+    );
   }
 
   // Importa/atualiza um funcionario vindo da memoria do REP (por PIS/CPF).
@@ -210,21 +277,23 @@ export class IdCloudClient {
     if (ex.length) {
       await this.pool.query(
         `UPDATE pessoas SET Nome=?, Codigo=?, Senha=COALESCE(?, Senha), Matricula=?,
-                Admin=?, Rfid=?, Barras=?, Excluido=0, ExcluidoDefinitivo=0, DataAtualizacao=NOW()
+                Admin=?, Rfid=?, Barras=?, id_Empregador=COALESCE(?, id_Empregador),
+                Excluido=0, ExcluidoDefinitivo=0, DataAtualizacao=NOW()
           WHERE id_pessoa=?`,
         [p.nome || null, p.codigo ?? null, p.senha || null, p.matricula ?? null,
-          p.admin ? 1 : 0, p.rfid || null, p.barras || null, ex[0].id_pessoa]
+          p.admin ? 1 : 0, p.rfid || null, p.barras || null, p.id_Empregador || null,
+          ex[0].id_pessoa]
       );
       return ex[0].id_pessoa;
     }
     const [r] = await this.pool.query(
       `INSERT INTO pessoas
-        (PIS, CPF, Nome, Codigo, Senha, Matricula, Admin, Rfid, Barras,
+        (PIS, CPF, Nome, Codigo, Senha, Matricula, Admin, Rfid, Barras, id_Empregador,
          Excluido, ExcluidoDefinitivo, DataAtualizacao)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NOW())`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NOW())`,
       [is671 ? null : (p.pis || null), is671 ? (p.cpf || null) : null, p.nome || null,
         p.codigo ?? null, p.senha || '1234', p.matricula ?? null, p.admin ? 1 : 0,
-        p.rfid || null, p.barras || null]
+        p.rfid || null, p.barras || null, p.id_Empregador || null]
     );
     return r.insertId;
   }
@@ -250,14 +319,14 @@ export class IdCloudClient {
       if (ex.length) {
         id = ex[0].id_Empregador;
         await this.pool.query(
-          'UPDATE empregadores SET RazaoSocial=?, Local=?, CEI=?, CPF=? WHERE id_Empregador=?',
+          'UPDATE empregadores SET RazaoSocial=?, Local=?, CEI=?, CPF=?, DataAtualizacao=NOW() WHERE id_Empregador=?',
           [nome, local, cei, cpf, id]
         );
       }
     }
     if (!id) {
       const [r] = await this.pool.query(
-        'INSERT INTO empregadores (RazaoSocial, Local, CNPJ_CPF, CEI, CPF) VALUES (?, ?, ?, ?, ?)',
+        'INSERT INTO empregadores (RazaoSocial, Local, CNPJ_CPF, CEI, CPF, DataAtualizacao) VALUES (?, ?, ?, ?, ?, NOW())',
         [nome, local, doc, cei, cpf]
       );
       id = r.insertId;
@@ -269,6 +338,95 @@ export class IdCloudClient {
       id_Empregador: id, RazaoSocial: nome, Local: local,
       CNPJ_CPF: doc, CEI: cei, tipo_documento: tipoDocumento,
     };
+  }
+
+  // ---------- Empregadores (multi-empregador por tenant) ----------
+  async listarEmpregadores() {
+    const [rows] = await this.pool.query(
+      `SELECT e.*,
+              (SELECT COUNT(*) FROM equipamentos q WHERE q.id_Empregador = e.id_Empregador) AS reps,
+              (SELECT COUNT(*) FROM pessoas p
+                WHERE p.id_Empregador = e.id_Empregador AND p.ExcluidoDefinitivo = 0) AS pessoas
+         FROM empregadores e
+        ORDER BY e.RazaoSocial, e.id_Empregador`
+    );
+    return rows;
+  }
+
+  async gravarEmpregador(p = {}) {
+    const nome = String(p.RazaoSocial || p.razao_social || '').slice(0, 50) || null;
+    const local = String(p.Local || p.local || '').slice(0, 100) || null;
+    const doc = String(p.CNPJ_CPF || p.cnpj || p.cpf || '').replace(/\D/g, '') || null;
+    const cei = String(p.CEI || p.cei || '').replace(/\D/g, '') || null;
+    const tipo = (p.tipo_documento || (doc && doc.length === 11 ? 'CPF' : 'CNPJ')).toUpperCase();
+    const cpf = tipo === 'CPF' ? doc : null;
+    if (!nome) throw new Error('Informe a razao social do empregador');
+
+    if (doc) {
+      const [ex] = await this.pool.query(
+        'SELECT id_Empregador FROM empregadores WHERE CNPJ_CPF = ? LIMIT 1', [doc]
+      );
+      if (ex.length) {
+        await this.pool.query(
+          `UPDATE empregadores SET RazaoSocial=?, Local=?, CNPJ_CPF=?, CEI=?, CPF=?,
+                  DataAtualizacao=NOW() WHERE id_Empregador=?`,
+          [nome, local, doc, cei, cpf, ex[0].id_Empregador]
+        );
+        return { id_Empregador: ex[0].id_Empregador, RazaoSocial: nome, Local: local,
+          CNPJ_CPF: doc, CEI: cei, tipo_documento: tipo };
+      }
+    }
+    const [r] = await this.pool.query(
+      `INSERT INTO empregadores
+        (RazaoSocial, Local, CNPJ_CPF, CEI, CPF, DataAtualizacao)
+       VALUES (?, ?, ?, ?, ?, NOW())`,
+      [nome, local, doc, cei, cpf]
+    );
+    return { id_Empregador: r.insertId, RazaoSocial: nome, Local: local,
+      CNPJ_CPF: doc, CEI: cei, tipo_documento: tipo };
+  }
+
+  async atualizarEmpregador(id, p = {}) {
+    const nome = String(p.RazaoSocial || p.razao_social || '').slice(0, 50) || null;
+    const local = String(p.Local || p.local || '').slice(0, 100) || null;
+    const doc = String(p.CNPJ_CPF || p.cnpj || p.cpf || '').replace(/\D/g, '') || null;
+    const cei = String(p.CEI || p.cei || '').replace(/\D/g, '') || null;
+    const tipo = (p.tipo_documento || (doc && doc.length === 11 ? 'CPF' : 'CNPJ')).toUpperCase();
+    const cpf = tipo === 'CPF' ? doc : null;
+    await this.pool.query(
+      `UPDATE empregadores SET RazaoSocial=?, Local=?, CNPJ_CPF=?, CEI=?, CPF=?,
+              DataAtualizacao=NOW() WHERE id_Empregador=?`,
+      [nome, local, doc, cei, cpf, Number(id)]
+    );
+    return { id_Empregador: Number(id), RazaoSocial: nome, Local: local,
+      CNPJ_CPF: doc, CEI: cei, tipo_documento: tipo };
+  }
+
+  async removerEmpregador(id) {
+    const n = Number(id);
+    const [[r]] = await this.pool.query(
+      'SELECT COUNT(*) AS n FROM equipamentos WHERE id_Empregador = ?', [n]
+    );
+    const [[p]] = await this.pool.query(
+      'SELECT COUNT(*) AS n FROM pessoas WHERE id_Empregador = ?', [n]
+    );
+    if (Number(r.n) || Number(p.n)) {
+      throw new Error('Empregador em uso por REP/funcionario; reatribua antes de remover');
+    }
+    await this.pool.query('DELETE FROM empregadores WHERE id_Empregador = ?', [n]);
+    return { ok: true };
+  }
+
+  async definirEmpregadorDoRep(idEquipamento, idEmpregador) {
+    await this.pool.query(
+      'UPDATE equipamentos SET id_Empregador = ?, DataAtualizacao = NOW() WHERE id_Equipamento = ?',
+      [idEmpregador ? Number(idEmpregador) : null, Number(idEquipamento)]
+    );
+    return { ok: true, id_Equipamento: Number(idEquipamento), id_Empregador: idEmpregador || null };
+  }
+
+  async listarPessoasDoEmpregador(idEmpregador) {
+    return this.listarPessoas({ idEmpregador });
   }
 
   // Grava/atualiza um template biometrico (digital ou face) de uma pessoa.

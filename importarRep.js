@@ -38,13 +38,15 @@ export async function importarDoRep({
   if (dadosEmpresa) {
     empregador = await client.importarEmpresa({ idEquipamento, empresa: dadosEmpresa });
   }
+  const idEmpregador = empregador?.id_Empregador || null;
 
   let pessoas = 0, templates = 0, ignorados = 0;
   for (const u of lista) {
     const m = mapearUsuario(u);
     if (!documentoValido(m.pis, m.cpf)) { ignorados++; continue; }
-    const idP = await client.importarPessoa({ ...m, portaria: m.tipo });
-    await client.vincularEquipamento(idP, idEquipamento);
+    const idP = await client.importarPessoa({ ...m, portaria: m.tipo, id_Empregador: idEmpregador });
+    // Veio do REP: ele ja tem a pessoa, nao precisa reenviar no primeiro sync.
+    await client.vincularEquipamento(idP, idEquipamento, { enviado: true });
     for (const t of m.templates) {
       await client.gravarTemplate(idP, t.tipo, t.indice, t.dados);
       templates++;

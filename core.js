@@ -487,7 +487,10 @@ export async function aplicarMigracoesTenant(schema) {
     ['pessoas', 'Excluido', 'BIT DEFAULT 0'],
     ['pessoas', 'ExcluidoDefinitivo', 'BIT DEFAULT 0'],
     ['pessoas', 'id_departamento', 'INT'],
+    ['pessoas', 'id_Empregador', 'INT'],
     ['pessoas', 'DataAtualizacao', 'DATETIME'],
+    ['equip_pessoa', 'UltimoEnvio', 'DATETIME'],
+    ['empregadores', 'DataAtualizacao', 'DATETIME'],
   ];
   for (const [tabela, coluna, tipo] of colunas) {
     const [ex] = await pool.query(
@@ -499,6 +502,31 @@ export async function aplicarMigracoesTenant(schema) {
       await pool.query(`ALTER TABLE \`${tabela}\` ADD COLUMN \`${coluna}\` ${tipo}`);
       aplicados.push(`${tabela}.${coluna}`);
     }
+  }
+
+  // Indice do empregador no funcionario (filtro/relatorios por empregador).
+  const [idxEmp] = await pool.query(
+    'SELECT COUNT(*) AS n FROM information_schema.STATISTICS ' +
+    'WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+    [schema, 'pessoas', 'id_Empregador']
+  );
+  if (!Number(idxEmp[0]?.n || 0)) {
+    await pool.query('ALTER TABLE pessoas ADD INDEX idx_empregador (id_Empregador)');
+    aplicados.push('pessoas.idx_empregador');
+  }
+
+  // Backfill do multi-empregador: quem ja esta vinculado a um REP herda o
+  // empregador do REP (se ainda nao tiver um). Idempotente.
+  try {
+    await pool.query(
+      `UPDATE pessoas p
+         JOIN equip_pessoa ep ON ep.id_Pessoa = p.id_pessoa
+         JOIN equipamentos q ON q.id_Equipamento = ep.id_Equipamento
+          SET p.id_Empregador = q.id_Empregador
+        WHERE p.id_Empregador IS NULL AND q.id_Empregador IS NOT NULL`
+    );
+  } catch (e) {
+    console.error(`[migracao-tenant] ${schema}: backfill id_Empregador falhou:`, e.message);
   }
 
   // rep_coletas.id_reps guarda o id_Equipamento, que e' o serial do aparelho

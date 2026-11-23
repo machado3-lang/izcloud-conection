@@ -26,6 +26,10 @@
 > **VPS relay L4 para o REP-C:** [`VPS-RELAY.md`](VPS-RELAY.md) — IP fixo na
 > 443 → TCP Proxy da Railway → `idcloudServer`.
 >
+> **Multi-empregador (23/11/2026):** [`MULTI-EMPREGADOR.md`](MULTI-EMPREGADOR.md)
+> — 1 tenant → N empregadores; 1 empregador → N REPs/funcionários; envio
+> incremental por `equip_pessoa.UltimoEnvio`; aba Empregadores.
+>
 > **Retomar em 06/11/2026:** [`SESSAO-2026-11-06.md`](SESSAO-2026-11-06.md) —
 > estado atual, VPS contratado, comandos exatos e pendências para fechar o REP-C.
 >

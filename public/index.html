@@ -286,6 +286,7 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
       <nav class="nav-menu">
         <button class="nav-item active" data-pane="painel"><span id="ni-painel"></span> Painel</button>
         <button class="nav-item" data-pane="reps"><span id="ni-reps"></span> REPs</button>
+        <button class="nav-item" data-pane="empregadores"><span id="ni-empregadores"></span> Empregadores</button>
         <button class="nav-item" data-pane="pessoas"><span id="ni-pessoas"></span> Funcionários</button>
         <button class="nav-item" data-pane="afd"><span id="ni-afd"></span> AFD</button>
         <button class="nav-item" data-pane="usuarios"><span id="ni-usuarios"></span> Usuários</button>
@@ -376,12 +377,43 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
               </select>
             </div>
           </div>
+          <div class="row">
+            <div style="flex:1;"><label class="fld">Empregador</label>
+              <select id="c_empregador" class="form-input"><option value="0">— sem empregador —</option></select>
+            </div>
+          </div>
           <button class="btn-primary" id="c_save" style="margin-top:14px;">Cadastrar</button>
         </div>
         <div class="glass-card" style="margin-top:1.5rem;">
           <h3><span id="h-list"></span> REPs cadastrados</h3>
           <button class="btn-ghost" id="r_refresh">Atualizar</button>
           <div id="r_list" style="margin-top:10px;"></div>
+        </div>
+      </section>
+
+      <!-- Empregadores -->
+      <section data-pane="empregadores" class="hidden fade-in">
+        <div class="glass-card">
+          <h3><span id="h-empregadores"></span> Empregadores</h3>
+          <p class="muted" style="margin-bottom:12px;">
+            Um tenant pode ter vários empregadores. Cada empregador pode ter vários REPs e vários funcionários;
+            o mesmo funcionário pode ser vinculado a mais de um REP. O empregador é o CNPJ/CPF que aparece no AFD.
+          </p>
+          <div class="row" style="align-items:flex-end;">
+            <div style="flex:2;"><label class="fld">Razão social</label><input id="e_razao" class="form-input" /></div>
+            <div><label class="fld">CNPJ/CPF</label><input id="e_doc" class="form-input" /></div>
+            <div><label class="fld">CEI</label><input id="e_cei" class="form-input" /></div>
+            <div><label class="fld">Local</label><input id="e_local" class="form-input" /></div>
+            <div><button class="btn-primary" id="e_save">Salvar empregador</button></div>
+            <div><button class="btn-ghost" id="e_cancel" style="display:none;">Cancelar</button></div>
+          </div>
+          <input type="hidden" id="e_id" />
+          <p class="muted" style="margin-top:10px;">
+            O firmware do REP expõe apenas <code>load_company</code> (leitura). O cadastro do empregador no iZCloud
+            serve para gestão, vínculo dos REPs e geração do AFD 1510. Para um REP novo, o empregador precisa ser
+            configurado no próprio equipamento (REPCONFIG) ou importado dele.
+          </p>
+          <div id="e_list" style="margin-top:14px;"></div>
         </div>
       </section>
 
@@ -393,7 +425,11 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
           <div class="row" style="align-items:flex-end;">
             <div style="flex:0 0 300px;">
               <label class="fld">REP (equipamento)</label>
-              <select id="v_rep" class="form-input"><option value="0">— Todos os REPs —</option></select>
+              <select id="v_rep" class="form-input"><option value="0">- Todos os REPs -</option></select>
+            </div>
+            <div style="flex:0 0 240px;">
+              <label class="fld">Empregador</label>
+              <select id="f_empregador" class="form-input"><option value="0">— Todos —</option></select>
             </div>
             <div><button class="btn-ghost" id="v_refresh">Atualizar</button></div>
           </div>
@@ -406,7 +442,8 @@ select.form-input option { background: var(--bg-secondary); color: var(--text-pr
           <h3><span id="h-add"></span> Adicionar funcionário (salva na nuvem; envio ao REP é opcional)</h3>
           <p class="muted" style="margin-bottom:12px;">O cadastro fica salvo mesmo sem conexão com o REP. Se escolher um REP, o sistema usa o IP/porta/senha já cadastrados no equipamento e envia na hora; o envio também pode ser feito depois em “Importar / enviar”.</p>
           <div class="row">
-            <div style="flex:1.4;"><label class="fld">REP (opcional — salvar e enviar)</label><select id="u_rep" class="form-input"><option value="0">— só salvar na nuvem —</option></select></div>
+            <div style="flex:1.4;"><label class="fld">REP (opcional - salvar e enviar)</label><select id="u_rep" class="form-input"><option value="0">- só salvar na nuvem -</option></select></div>
+            <div style="flex:1;"><label class="fld">Empregador</label><select id="u_empregador" class="form-input"><option value="0">- sem empregador -</option></select></div>
           </div>
           <div class="row">
             <div><label class="fld">Portaria do REP</label><select id="u_port" class="form-input"><option value="1510">1510 (PIS)</option><option value="671">671 (CPF)</option></select></div>
@@ -568,9 +605,9 @@ function mountIcons() {
     'brand-ico': ['cloud', 18], 'login-brand': ['cloud', 22],
     'l-ico-user': ['user', 16], 'l-ico-lock': ['lock', 16],
     'ni-painel': ['chart', 18],
-    'ni-reps': ['server', 18], 'ni-pessoas': ['users', 18], 'ni-afd': ['clock', 18],
+    'ni-reps': ['server', 18], 'ni-empregadores': ['list', 18], 'ni-pessoas': ['users', 18], 'ni-afd': ['clock', 18],
     'ni-usuarios': ['user', 18], 'ni-admin': ['shield', 18], 'ni-out': ['logout', 18],
-    'h-probe': ['radio', 16], 'h-cad': ['save', 16], 'h-list': ['list', 16],
+    'h-probe': ['radio', 16], 'h-cad': ['save', 16], 'h-list': ['list', 16], 'h-empregadores': ['list', 16],
     'h-vinc': ['users', 16], 'h-add': ['user', 16],
     'h-sync': ['refresh', 16], 'h-exp': ['download', 16], 'h-import': ['upload', 16], 'h-user': ['user', 16],
     'h-sync2': ['refresh', 16],
@@ -653,7 +690,7 @@ function applyAuth() {
   if (logged) {
     showPane('painel');
     renderEmpresaBar();
-    if (temEmpresa()) { carregarPainel(); loadReps(); carregarVinculo(); if (podeGerenciar()) loadUsuarios(); }
+    if (temEmpresa()) { carregarPainel(); loadReps(); loadEmpregadores(); carregarVinculo(); if (podeGerenciar()) loadUsuarios(); }
     atualizarPerfil(); // papel pode ter mudado desde o ultimo login
   }
 }
@@ -749,7 +786,7 @@ function renderEmpresaBar() {
   sel.value = EMP_SCHEMA;
   sel.onchange = () => {
     const e = EMPRESAS.find(x => x.schema === sel.value);
-    if (e) { selecionarEmpresa(e.schema, e.id_cliente); renderEmpresaBar(); carregarPainel(); loadReps(); carregarVinculo(); if (podeGerenciar()) loadUsuarios(); }
+    if (e) { selecionarEmpresa(e.schema, e.id_cliente); renderEmpresaBar(); carregarPainel(); loadReps(); loadEmpregadores(); carregarVinculo(); if (podeGerenciar()) loadUsuarios(); }
   };
   renderEmpCard();
 }
@@ -778,7 +815,8 @@ function renderEmpCard() {
       <div class="ec-item"><div class="k">Endereço</div><div class="v">${e.endereco || '-'}</div></div>
       <div class="ec-item"><div class="k">Responsável</div><div class="v">${e.responsavel_nome || '-'}</div></div>
       <div class="ec-item"><div class="k">CPF do responsável</div><div class="v">${e.responsavel_cpf || '-'}</div></div>
-    </div>`;
+    </div>
+    <div class="muted" style="margin-top:.6rem;font-size:.8rem;">Esta é a conta/empresa do iZCloud. Os empregadores (CNPJ/CPF) ficam na aba <b>Empregadores</b>.</div>`;
   $('emp_edit').onclick = () => abrirEmpModal(e);
 }
 
@@ -1082,9 +1120,9 @@ $('c_save').onclick = async () => {
     // atras do NAT do cliente e quem inicia a conexao e' ele (canal iDCloud).
     const serial = ($('c_serial').value || SERIAL_SONDADO || '').trim();
     if (!serial) { toast('Informe o número de série do REP (ou use o Sondar).', 'error'); return; }
-    const r = await api('/api/reps', { method: 'POST', body: JSON.stringify({ serial, Nome: $('c_nome').value, IpAddress: $('c_ip').value, Porta: Number($('c_porta').value), Passcode: $('c_pass').value, REPType: $('c_tipo').value, ModoConexao: $('c_modo').value }) });
+    const r = await api('/api/reps', { method: 'POST', body: JSON.stringify({ serial, Nome: $('c_nome').value, IpAddress: $('c_ip').value, Porta: Number($('c_porta').value), Passcode: $('c_pass').value, REPType: $('c_tipo').value, ModoConexao: $('c_modo').value, id_Empregador: Number($('c_empregador').value) || null }) });
     toast('REP cadastrado com o id ' + r.id_Equipamento + '.', 'success');
-    await loadReps(); await carregarVinculo();
+    await loadReps(); await loadEmpregadores(); await carregarVinculo();
   } catch (e) { toast(e.message, 'error'); }
 };
 async function loadReps() {
@@ -1092,37 +1130,39 @@ async function loadReps() {
   if (!temEmpresa()) { box.innerHTML = '<p class="muted">Selecione uma empresa.</p>'; return; }
   try {
     const rows = await api('/api/reps');
+    let emps = [];
+    try { emps = await api('/api/empregadores'); } catch { emps = []; }
+    E_EMPREGADORES = emps || [];
     if (!rows.length) { box.innerHTML = '<p class="muted">Nenhum REP cadastrado.</p>'; return; }
-    box.innerHTML = '<p class="muted" style="margin-bottom:8px;">No modo <b>rep_empurra</b>, a empresa/funcionários são importados automaticamente quando o REP conecta (canal iDCloud). Use <b>Vincular empresa</b> para copiar o empregador do REP para o perfil da empresa.</p>' +
+    box.innerHTML = '<p class="muted" style="margin-bottom:8px;">Cada REP pertence a um <b>empregador</b>; um empregador pode ter vários REPs. No modo <b>rep_empurra</b>, empresa/funcionários são importados automaticamente na conexão do REP.</p>' +
       '<div class="data-table-container"><table class="data-table"><thead><tr><th>ID</th><th>Nome</th><th>IP:Porta</th><th>Tipo</th><th>Modo</th><th>Pessoas</th><th>Digitais</th><th>Empregador</th><th>Ações</th></tr></thead><tbody>' +
       rows.map(r => {
         const modo = r.ModoConexao || 'nuvem_puxa';
         const modoPill = modo === 'rep_empurra' ? '<span class="pill am">rep_empurra</span>' : '<span class="pill c">nuvem_puxa</span>';
-        const empregador = r.Empregador
-          ? `<b>${r.Empregador}</b><div class="muted" style="font-size:.72rem">${r.EmpregadorDoc || '-'}</div>`
-          : '<span class="muted">não importado</span>';
+        const opcoesEmp = '<option value="0">— sem empregador —</option>' +
+          E_EMPREGADORES.map(e => `<option value="${e.id_Empregador}" ${Number(e.id_Empregador) === Number(r.id_Empregador) ? 'selected' : ''}>${e.RazaoSocial || e.CNPJ_CPF || ('Empregador ' + e.id_Empregador)}</option>`).join('');
         const acaoImportar = modo === 'rep_empurra'
           ? '<span class="muted" title="O canal iDCloud ja importa empresa/funcionarios na conexao do REP">canal automático</span>'
           : `<button class="btn-ghost" type="button" data-import="${r.id_Equipamento}" title="Le empresa/funcionarios do iDClass por IP/porta.">Importar</button>`;
-        const acaoVincular = r.Empregador
-          ? `<button class="btn-ghost" type="button" data-vincular="${r.id_Equipamento}" title="Copia o empregador do REP para o perfil desta empresa">Vincular empresa</button>`
-          : '';
         return `<tr><td>${r.id_Equipamento}</td><td><b>${r.Nome || '-'}</b>
           <div class="muted" style="font-size:.72rem">série ${r.Serial || '-'}</div></td>
           <td>${r.IpAddress || '-'}:${r.Porta ?? '-'}</td><td>${r.REPType ? `<span class="pill c">${r.REPType}</span>` : '-'}</td><td>${modoPill}</td><td>${r.qtdePessoas ?? '-'}</td><td>${r.qtdeDigitais ?? '-'}</td>
-          <td>${empregador}</td><td>${acaoVincular} ${acaoImportar}</td></tr>`;
+          <td><select class="form-input" data-rep-empregador="${r.id_Equipamento}">${opcoesEmp}</select>
+            ${r.EmpregadorDoc ? `<div class="muted" style="font-size:.72rem">${r.EmpregadorDoc}</div>` : ''}</td>
+          <td>${acaoImportar}</td></tr>`;
       }).join('') + '</tbody></table></div>';
-    box.querySelectorAll('button[data-vincular]').forEach((b) => {
-      b.onclick = async () => {
-        const id = b.dataset.vincular;
-        b.disabled = true; b.textContent = 'Vinculando...';
+    box.querySelectorAll('select[data-rep-empregador]').forEach((s) => {
+      s.onchange = async () => {
+        s.disabled = true;
         try {
-          const r = await api('/api/reps/' + id + '/vincular-empresa', { method: 'POST', body: JSON.stringify({}) });
-          toast('Empresa vinculada: ' + (r.empregador?.RazaoSocial || r.empregador?.CNPJ_CPF || ''), 'success');
-          await loadReps(); await carregarPainel();
+          await api('/api/reps/' + s.dataset.repEmpregador + '/empregador', {
+            method: 'PUT', body: JSON.stringify({ id_Empregador: Number(s.value) || null }),
+          });
+          toast('Empregador do REP atualizado.', 'success');
+          await loadReps(); await carregarVinculo();
         } catch (e) {
           toast(e.message, 'error');
-          b.disabled = false; b.textContent = 'Vincular empresa';
+          s.disabled = false;
         }
       };
     });
@@ -1145,21 +1185,114 @@ async function loadReps() {
 }
 $('r_refresh').onclick = loadReps;
 
+// ---------- Empregadores ----------
+async function loadEmpregadores() {
+  if (!temEmpresa()) return;
+  try {
+    const rows = await api('/api/empregadores');
+    E_EMPREGADORES = rows || [];
+    const box = $('e_list');
+    if (!box) return;
+    if (!rows.length) {
+      box.innerHTML = '<p class="muted">Nenhum empregador cadastrado.</p>';
+    } else {
+      box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr><th>ID</th><th>Razão social</th><th>CNPJ/CPF</th><th>CEI</th><th>REPs</th><th>Funcionários</th><th>Ações</th></tr></thead><tbody>' +
+        rows.map(e => `<tr><td>${e.id_Empregador}</td>
+          <td><b>${e.RazaoSocial || '-'}</b><div class="muted" style="font-size:.72rem">${e.Local || ''}</div></td>
+          <td>${e.CNPJ_CPF || '-'}</td><td>${e.CEI || '-'}</td><td>${e.reps ?? 0}</td><td>${e.pessoas ?? 0}</td>
+          <td><button class="btn-ghost" data-emp-edit="${e.id_Empregador}">Editar</button>
+              <button class="btn-ghost" data-emp-del="${e.id_Empregador}">Excluir</button></td></tr>`).join('') +
+        '</tbody></table></div>';
+      box.querySelectorAll('button[data-emp-edit]').forEach(b => {
+        b.onclick = () => editarEmpregador(Number(b.dataset.empEdit));
+      });
+      box.querySelectorAll('button[data-emp-del]').forEach(b => {
+        b.onclick = () => removerEmpregador(Number(b.dataset.empDel));
+      });
+    }
+    const opcoes = rows.map(e => `<option value="${e.id_Empregador}">${e.RazaoSocial || e.CNPJ_CPF || ('Empregador ' + e.id_Empregador)}</option>`).join('');
+    const cSel = $('c_empregador');
+    if (cSel) { const keep = cSel.value; cSel.innerHTML = '<option value="0">— sem empregador —</option>' + opcoes; cSel.value = keep; }
+    const uSel = $('u_empregador');
+    if (uSel) { const keep = uSel.value; uSel.innerHTML = '<option value="0">- sem empregador -</option>' + opcoes; uSel.value = keep; }
+    const fSel = $('f_empregador');
+    if (fSel) { const keep = fSel.value; fSel.innerHTML = '<option value="0">— Todos —</option>' + opcoes; fSel.value = keep || '0'; }
+  } catch (e) {
+    const box = $('e_list');
+    if (box) box.innerHTML = '<div class="msg err">' + e.message + '</div>';
+  }
+}
+function editarEmpregador(id) {
+  const e = E_EMPREGADORES.find(x => Number(x.id_Empregador) === Number(id));
+  if (!e) return;
+  $('e_id').value = e.id_Empregador;
+  $('e_razao').value = e.RazaoSocial || '';
+  $('e_doc').value = e.CNPJ_CPF || '';
+  $('e_cei').value = e.CEI || '';
+  $('e_local').value = e.Local || '';
+  $('e_cancel').style.display = 'inline-block';
+  $('e_razao').focus();
+}
+async function removerEmpregador(id) {
+  if (!confirm('Remover o empregador ' + id + '? Ele não pode estar em uso por REP/funcionário.')) return;
+  try {
+    await api('/api/empregadores/' + id, { method: 'DELETE' });
+    toast('Empregador removido.', 'success');
+    await loadEmpregadores(); await loadReps(); await carregarVinculo();
+  } catch (e) { toast(e.message, 'error'); }
+}
+$('e_save').onclick = async () => {
+  const id = Number($('e_id').value) || null;
+  const body = {
+    RazaoSocial: $('e_razao').value.trim(),
+    CNPJ_CPF: $('e_doc').value.replace(/\D/g, ''),
+    CEI: $('e_cei').value.replace(/\D/g, ''),
+    Local: $('e_local').value.trim(),
+  };
+  if (!body.RazaoSocial) { toast('Informe a razão social.', 'error'); return; }
+  try {
+    await api('/api/empregadores' + (id ? '/' + id : ''), {
+      method: id ? 'PUT' : 'POST', body: JSON.stringify(body),
+    });
+    toast(id ? 'Empregador atualizado.' : 'Empregador cadastrado.', 'success');
+    $('e_id').value = ''; $('e_razao').value = ''; $('e_doc').value = '';
+    $('e_cei').value = ''; $('e_local').value = ''; $('e_cancel').style.display = 'none';
+    await loadEmpregadores(); await loadReps(); await carregarVinculo();
+  } catch (e) { toast(e.message, 'error'); }
+};
+$('e_cancel').onclick = () => {
+  $('e_id').value = ''; $('e_razao').value = ''; $('e_doc').value = '';
+  $('e_cei').value = ''; $('e_local').value = ''; $('e_cancel').style.display = 'none';
+};
+
 // ---------- Funcionários: vínculo ----------
 let V_REP = 0, V_PESSOAS = [], V_VINC = [], V_REPS = [], V_PENDING = null, BIO = {};
+let E_EMPREGADORES = [], F_EMPREGADOR = 0;
 async function carregarVinculo() {
   if (!temEmpresa()) { $('v_list').innerHTML = '<p class="muted">Selecione uma empresa.</p>'; return; }
   try {
-    const [p, v, r] = await Promise.all([ api('/api/pessoas'), api('/api/pessoas/vinculos'), api('/api/reps') ]);
-    V_PESSOAS = p; V_VINC = v; V_REPS = r;
+    const [p, v, r] = await Promise.all([
+      api('/api/pessoas'), api('/api/pessoas/vinculos'), api('/api/reps'),
+    ]);
+    let e = [];
+    try { e = await api('/api/empregadores'); } catch { e = []; }
+    V_PESSOAS = p; V_VINC = v; V_REPS = r; E_EMPREGADORES = e || [];
     BIO = await api('/api/pessoas/biometria');
     const sel = $('v_rep'); const keep = sel.value;
-    sel.innerHTML = '<option value="0">— Todos os REPs —</option>' + r.map(x => `<option value="${x.id_Equipamento}">${x.id_Equipamento} · ${x.Nome || '-'}</option>`).join('');
+    sel.innerHTML = '<option value="0">— Todos os REPs —</option>' + r.map(x => `<option value="${x.id_Equipamento}" data-emp="${x.id_Empregador || 0}">${x.id_Equipamento} · ${x.Nome || '-'}</option>`).join('');
     sel.value = keep;
-    // Também alimenta o seletor do card "Adicionar funcionário".
+    // Filtro por empregador (funcionários do mesmo empregador).
+    const fSel = $('f_empregador'); const keepF = fSel.value;
+    fSel.innerHTML = '<option value="0">— Todos —</option>' + E_EMPREGADORES.map(x => `<option value="${x.id_Empregador}">${x.RazaoSocial || x.CNPJ_CPF || ('Empregador ' + x.id_Empregador)}</option>`).join('');
+    fSel.value = keepF || '0';
+    F_EMPREGADOR = Number(fSel.value) || 0;
+    // Seletor do card "Adicionar funcionário".
     const uSel = $('u_rep'); const keepU = uSel.value;
-    uSel.innerHTML = '<option value="0">— só salvar na nuvem —</option>' + r.map(x => `<option value="${x.id_Equipamento}" data-tipo="${x.REPType || ''}">${x.id_Equipamento} · ${x.Nome || '-'}</option>`).join('');
+    uSel.innerHTML = '<option value="0">— só salvar na nuvem —</option>' + r.map(x => `<option value="${x.id_Equipamento}" data-tipo="${x.REPType || ''}" data-emp="${x.id_Empregador || 0}">${x.id_Equipamento} · ${x.Nome || '-'}</option>`).join('');
     uSel.value = keepU;
+    const ue = $('u_empregador'); const keepE = ue.value;
+    ue.innerHTML = '<option value="0">- sem empregador -</option>' + E_EMPREGADORES.map(x => `<option value="${x.id_Empregador}">${x.RazaoSocial || x.CNPJ_CPF || ('Empregador ' + x.id_Empregador)}</option>`).join('');
+    ue.value = keepE || '0';
     renderVinculo();
   } catch (e) { $('v_list').innerHTML = '<div class="msg err">' + e.message + '</div>'; }
 }
@@ -1173,32 +1306,51 @@ function bioPills(id) {
 }
 function renderVinculo() {
   const box = $('v_list');
-  if (!V_PESSOAS.length) { box.innerHTML = '<p class="muted">Nenhum funcionário cadastrado. Use o card abaixo para adicionar.</p>'; $('v_savebox').style.display = 'none'; return; }
+  const pessoas = F_EMPREGADOR
+    ? V_PESSOAS.filter(p => Number(p.id_Empregador) === Number(F_EMPREGADOR))
+    : V_PESSOAS;
+  if (!pessoas.length) {
+    box.innerHTML = '<p class="muted">Nenhum funcionário cadastrado' + (F_EMPREGADOR ? ' para este empregador' : '') + '. Use o card abaixo para adicionar.</p>';
+    $('v_savebox').style.display = 'none';
+    return;
+  }
   const porPessoa = {}; V_VINC.forEach(v => { (porPessoa[v.id_Pessoa] = porPessoa[v.id_Pessoa] || []).push(v.id_Equipamento); });
   if (V_REP === 0) {
     $('v_savebox').style.display = 'none';
-    box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr><th>ID</th><th>Nome</th><th>Doc</th><th>REPs vinculados</th></tr></thead><tbody>' +
-      V_PESSOAS.map(p => {
+    box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr><th>ID</th><th>Nome</th><th>Doc</th><th>Empregador</th><th>REPs vinculados</th></tr></thead><tbody>' +
+      pessoas.map(p => {
         const reps = porPessoa[p.id_pessoa] || [];
         const pills = reps.length ? reps.map(id => `<span class="pill c">${repNome(id)}</span>`).join(' ') : '<span class="muted">— nenhum —</span>';
         const doc = p.CPF || p.PIS || '-';
-        return `<tr><td>${p.id_pessoa}</td><td>${p.Nome || '-'}</td><td>${doc}</td><td>${bioPills(p.id_pessoa)}</td><td>${pills}</td></tr>`;
+        return `<tr><td>${p.id_pessoa}</td><td>${p.Nome || '-'}</td><td>${doc}</td><td>${p.Empregador || '<span class="muted">—</span>'}</td><td>${pills}</td></tr>`;
       }).join('') + '</tbody></table></div>';
   } else {
     if (V_PENDING === null) V_PENDING = new Set(porPessoa[V_REP] || []);
     const cur = V_PENDING; $('v_savebox').style.display = 'block';
-    box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr><th></th><th>ID</th><th>Nome</th><th>Doc</th><th>Bio</th><th>Também em</th></tr></thead><tbody>' +
-      V_PESSOAS.map(p => {
+    box.innerHTML = '<div class="data-table-container"><table class="data-table"><thead><tr><th></th><th>ID</th><th>Nome</th><th>Doc</th><th>Empregador</th><th>Bio</th><th>Também em</th></tr></thead><tbody>' +
+      pessoas.map(p => {
         const checked = cur.has(p.id_pessoa) ? 'checked' : '';
         const outros = (porPessoa[p.id_pessoa] || []).filter(id => id !== V_REP);
         const pills = outros.length ? outros.map(id => `<span class="pill c">${repNome(id)}</span>`).join(' ') : '<span class="muted">—</span>';
         const doc = p.CPF || p.PIS || '-';
-        return `<tr><td><input type="checkbox" class="vchk" data-id="${p.id_pessoa}" ${checked}></td><td>${p.id_pessoa}</td><td>${p.Nome || '-'}</td><td>${doc}</td><td>${bioPills(p.id_pessoa)}</td><td>${pills}</td></tr>`;
+        return `<tr><td><input type="checkbox" class="vchk" data-id="${p.id_pessoa}" ${checked}></td><td>${p.id_pessoa}</td><td>${p.Nome || '-'}</td><td>${doc}</td><td>${p.Empregador || '<span class="muted">—</span>'}</td><td>${bioPills(p.id_pessoa)}</td><td>${pills}</td></tr>`;
       }).join('') + '</tbody></table></div>';
     box.querySelectorAll('.vchk').forEach(c => { c.onchange = () => { const id = Number(c.dataset.id); if (c.checked) V_PENDING.add(id); else V_PENDING.delete(id); }; });
   }
 }
-$('v_rep').onchange = () => { V_REP = Number($('v_rep').value); V_PENDING = null; renderVinculo(); };
+$('v_rep').onchange = () => {
+  V_REP = Number($('v_rep').value);
+  V_PENDING = null;
+  const opt = $('v_rep').selectedOptions[0];
+  const emp = Number(opt?.dataset?.emp || 0);
+  if (V_REP && emp) { F_EMPREGADOR = emp; $('f_empregador').value = String(emp); }
+  renderVinculo();
+};
+$('f_empregador').onchange = () => {
+  F_EMPREGADOR = Number($('f_empregador').value) || 0;
+  V_PENDING = null;
+  renderVinculo();
+};
 $('v_refresh').onclick = carregarVinculo;
 $('v_save').onclick = async () => {
   try { await api('/api/reps/' + V_REP + '/funcionarios', { method: 'PUT', body: JSON.stringify({ ids: [...V_PENDING] }) }); V_PENDING = null; toast('Vínculos salvos no REP ' + V_REP + '.', 'success'); await carregarVinculo(); }
@@ -1213,7 +1365,7 @@ $('u_send').onclick = async () => {
   const port = $('u_port').value; const doc = $('u_doc').value.replace(/\D/g, '');
   if (!doc) { toast('Informe o PIS/CPF.', 'error'); return; }
   if (!$('u_nome').value.trim()) { toast('Informe o nome do funcionário.', 'error'); return; }
-  const pessoa = { nome: $('u_nome').value.trim(), codigo: Number($('u_codigo').value || 0), senha: $('u_senha').value, matricula: Number($('u_matr').value || 0) };
+  const pessoa = { nome: $('u_nome').value.trim(), codigo: Number($('u_codigo').value || 0), senha: $('u_senha').value, matricula: Number($('u_matr').value || 0), id_Empregador: Number($('u_empregador').value) || null };
   if (port === '671') pessoa.cpf = doc; else pessoa.pis = doc;
   const idEquipamento = Number($('u_rep').value) || null;
   try {
